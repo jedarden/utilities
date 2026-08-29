@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# bao-as <instance> <command...>
+#
+# Log in to one named OpenBao/Vault instance with an AppRole and run <command>
+# with BAO_ADDR/BAO_TOKEN (and VAULT_ADDR/VAULT_TOKEN) set in its environment.
+#
+# Design points, each of which keeps a value out of the transcript:
+#   * role_id and secret_id are passed to the login as @file, never as argv
+#   * the token lives only in the child's environment -- it is never printed,
+#     never written to ~/.vault-token, and dies with the command
+#   * instances are independent token namespaces; you always name the one you
+#     mean, and a token from one is never reused against another
+#
+# Config (override the directory with BAO_AS_CONFIG_DIR):
+#   ~/.config/bao-as/instances.conf        "<name> <address>" per line, # comments
+#   ~/.config/bao-as/<name>/role_id         mode 0600
+#   ~/.config/bao-as/<name>/secret_id       mode 0600
+# The CLI binary defaults to `bao`; set BAO_AS_BIN=vault for HashiCorp Vault.
+#
+#   bao-as prod bao kv metadata get secret/app/db
+#   openssl rand -base64 32 | bao-as prod bao kv put -cas=3 secret/app/db password=-
+#   bao-as --list
+set -euo pipefail
+umask 077
+
+CONF_DIR="${BAO_AS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bao-as}"
+CONF="$CONF_DIR/instances.conf"
+BIN="${BAO_AS_BIN:-bao}"
+
+usage() {
+  echo "usage: bao-as <instance> <command...>" >&2
+  echo "       bao-as --list" >&2
+  echo "instances are read from $CONF" >&2
+  exit 2
+}
+
+list_instances() {
+  [ -r "$CONF" ] || { echo "bao-as: no instance table at $CONF" >&2; exit 78; }
+  awk '!/^[[:space:]]*(#|$)/ { print $1 }' "$CONF"
+}
+
+[ $# -ge 1 ] || usage
+case "$1" in
+  --list|-l) list_instances; exit 0 ;;
+  -h|--help) usage ;;
+esac
+[ $# -ge 2 ] || usage
+
+INST="$1"; shift
+[ -r "$CONF" ] || { echo "bao-as: no instance table at $CONF (see examples/bao-as-instances.conf)" >&2; exit 78; }
+ADDR="$(awk -v n="$INST" '!/^[[:space:]]*(#|$)/ && $1 == n { print $2; exit }' "$CONF")"
+[ -n "$ADDR" ] || { echo "bao-as: unknown instance '$INST'; known: $(list_instances | tr '\n' ' ')" >&2; exit 78; }
+
+D="$CONF_DIR/$INST"
+if [ ! -r "$D/role_id" ] || [ ! -r "$D/secret_id" ]; then
+  echo "bao-as: missing $D/role_id or $D/secret_id (mode 0600)" >&2
+  exit 78   # EX_CONFIG
+fi
+
+export BAO_ADDR="$ADDR" VAULT_ADDR="$ADDR"
+unset BAO_TOKEN VAULT_TOKEN || true
+
+# @file: neither value ever enters argv, shell history, or `ps`.
+if ! _t="$("$BIN" write -field=token auth/approle/login \
+            role_id=@"$D/role_id" secret_id=@"$D/secret_id" 2>/dev/null)"; then
+  echo "bao-as: AppRole login failed against $INST ($ADDR)" >&2
+  echo "        check: instance reachable, approle enabled, secret_id not expired/revoked" >&2
+  exit 77   # EX_NOPERM
+fi
+export BAO_TOKEN="$_t" VAULT_TOKEN="$_t"
+unset _t
+
+exec "$@"
