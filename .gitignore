@@ -5,3 +5,4 @@ __pycache__/
 .beads/traces/
 .beads/bypasses.jsonl.lock
 .beads/bypasses.jsonl.lock.d
+.beads/diagnostics/
