@@ -35,6 +35,14 @@ tool; nothing shared between folders except the license and this plan.
   carve-outs (`sys/audit*`, `sys/seal`, `sys/step-down` denied).
 - `examples/settings.json` — the hook wiring for `~/.claude/settings.json`.
 
+### org-rule-guard (planned, Phase 3)
+
+- `hooks/org-rule-guard.py` — the org-wide PreToolUse guard: no GitHub
+  Actions workflows, no `kind: Job`/`CronJob`, no `:latest`, no mutating
+  `kubectl`, no credential values, no blanket `git commit`. Reads its rules
+  from `~/.config/org-rule-guard/rules.yaml` and logs every denial.
+- `rules.yaml` — the shipped default rule set, one entry per rule.
+
 ## Data Models
 
 None. Configuration is files under `~/.config/bao-as/` (instance table and
@@ -45,7 +53,18 @@ per-instance `role_id` / `secret_id`, mode 0600) and an optional
 
 - [x] Phase 1: `agent-secrets` — hook, wrapper, policies, tests, installer
 - [ ] Phase 2: CI on Argo Workflows (unittest + shellcheck) — no GitHub Actions
-- [ ] Phase 3: further utilities as they are extracted from working setups
+- [ ] Phase 3: `org-rule-guard` — extract the working PreToolUse hook from
+  `~/.claude/hooks/org-rule-guard.py` (332 lines, six hard-coded rules, one
+  stdout deny path, no log). Two changes, in this order: (a) every denial
+  appends one JSONL line (`ts`, `rule_id`, `tool`, `cwd`, `session_id`,
+  matched fragment redacted) to `~/.local/state/org-rule-guard/denials.jsonl`,
+  so the fleet finally has a record of which rules agents keep hitting and
+  where the prose is failing; (b) the rules move out of Python into a YAML
+  file with per-rule id, pattern, tool scope and message, so a promoted lesson
+  can land as data rather than a code edit, and the credential rule delegates
+  to `agent-secrets/credential-guard.py` instead of duplicating it. Same
+  fail-open contract, same tests passing before and after.
+- [ ] Phase 4: further utilities as they are extracted from working setups
 
 ## Open Questions
 
