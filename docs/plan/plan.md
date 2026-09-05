@@ -35,19 +35,35 @@ tool; nothing shared between folders except the license and this plan.
   carve-outs (`sys/audit*`, `sys/seal`, `sys/step-down` denied).
 - `examples/settings.json` — the hook wiring for `~/.claude/settings.json`.
 
-### org-rule-guard (planned, Phase 3)
+### org-rule-guard (v0.1.0, Phase 3a)
 
-- `hooks/org-rule-guard.py` — the org-wide PreToolUse guard: no GitHub
-  Actions workflows, no `kind: Job`/`CronJob`, no `:latest`, no mutating
-  `kubectl`, no credential values, no blanket `git commit`. Reads its rules
-  from `~/.config/org-rule-guard/rules.yaml` and logs every denial.
-- `rules.yaml` — the shipped default rule set, one entry per rule.
+- `hooks/org-rule-guard.py` — the org-wide PreToolUse guard, ported from
+  `~/.claude/hooks/org-rule-guard.py`: no GitHub Actions workflows, no
+  `kind: Job`/`CronJob`, no `:latest`, no mutating `kubectl`, no credential
+  values, no blanket `git commit`. Same six rules, same deny messages, same
+  fail-open contract as the live hook. Every denial additionally appends one
+  JSON line (`ts`, `rule_id`, `tool`, `cwd`, `session_id`, redacted 80-char
+  fragment) to `${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl`.
+  The credential rule logs its pattern name, never a value, and every other
+  fragment is scrubbed through the same patterns before it is written.
+- `hooks/test_org_rule_guard.py` — unittest suite; fixtures are built at
+  runtime so no rule-triggering literal sits in the test file.
+  `ORG_RULE_GUARD_UNDER_TEST` points the whole suite at any hook copy, so one
+  fixture set proves both that the port matches the live hook and that the
+  log behaves (the log tests skip against a hook that predates the log).
+- `install.sh` — idempotent copy into `~/.claude/hooks/`. Never overwrites a
+  hook already at the destination and never touches `settings.json` without
+  `--wire`; `--uninstall` refuses a file this folder did not install.
+- `examples/settings.json` — the hook wiring for `~/.claude/settings.json`.
 
 ## Data Models
 
 None. Configuration is files under `~/.config/bao-as/` (instance table and
 per-instance `role_id` / `secret_id`, mode 0600) and an optional
-`~/.config/credential-guard/patterns.json` for extra patterns.
+`~/.config/credential-guard/patterns.json` for extra patterns. The one state
+artifact is `org-rule-guard`'s denial log,
+`${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl` — append-only
+JSONL, one record per deny, never read back by the hook that writes it.
 
 ## Implementation Phases
 
