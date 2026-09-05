@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/org-rule-guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
