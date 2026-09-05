@@ -64,6 +64,10 @@ per-instance `role_id` / `secret_id`, mode 0600) and an optional
   can land as data rather than a code edit, and the credential rule delegates
   to `agent-secrets/credential-guard.py` instead of duplicating it. Same
   fail-open contract, same tests passing before and after.
+  - [x] Phase 3(a): denial log — shipped 2026-09-05 as `org-rule-guard/`
+    v0.1.0 (35 tests, green against both the ported copy and the live hook)
+  - [ ] Phase 3(b): YAML rules + credential-rule delegation to
+    `agent-secrets/credential-guard.py`
 - [ ] Phase 4: further utilities as they are extracted from working setups
 
 ## Open Questions
