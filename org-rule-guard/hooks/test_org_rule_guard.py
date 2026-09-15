@@ -412,6 +412,41 @@ class Install(unittest.TestCase):
         self.assertTrue(os.path.exists(self.dst()), out)
         self.assertFalse(os.path.exists(self.settings), out)
 
+    def test_default_destinations_come_from_home(self):
+        """With no CLAUDE_HOOKS_DIR/CLAUDE_SETTINGS override the conventional
+        locations derive from $HOME itself -- the contract plan.md states is
+        about ~/.claude/hooks/, not about the env vars. A temp HOME keeps the
+        live hooks directory out of the picture."""
+        home = tempfile.mkdtemp(prefix="org-rule-guard-home-")
+        _CLEANUP.append(home)
+        env = dict(os.environ, HOME=home)
+        env.pop("CLAUDE_HOOKS_DIR", None)
+        env.pop("CLAUDE_SETTINGS", None)
+        proc = subprocess.run(["bash", self.script], capture_output=True,
+                              env=env, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+        out = proc.stdout.decode()
+        self.assertTrue(os.path.exists(
+            os.path.join(home, ".claude", "hooks", "org-rule-guard.py")), out)
+        self.assertFalse(os.path.exists(
+            os.path.join(home, ".claude", "settings.json")), out)
+
+    def test_uninstall_leaves_the_denial_log_in_place(self):
+        """The log is the fleet's record of what was denied; an uninstaller
+        that removed it would let a re-install erase the evidence."""
+        state = tempfile.mkdtemp(prefix="org-rule-guard-state-")
+        _CLEANUP.append(state)
+        log_dir = os.path.join(state, "org-rule-guard")
+        os.makedirs(log_dir)
+        log = os.path.join(log_dir, "denials.jsonl")
+        with open(log, "w") as fh:
+            fh.write('{"rule_id": "keep-me"}\n')
+        self.run_install()
+        out = self.run_install("--uninstall")
+        self.assertFalse(os.path.exists(self.dst()), out)
+        with open(log) as fh:
+            self.assertEqual(fh.read(), '{"rule_id": "keep-me"}\n', out)
+
     def test_installed_hook_is_executable(self):
         self.run_install()
         self.assertTrue(os.stat(self.dst()).st_mode & stat.S_IXUSR)
@@ -484,6 +519,19 @@ class Install(unittest.TestCase):
         self.assertEqual(s["model"], "opus")
         self.assertEqual(len(s["hooks"]["PreToolUse"]), 1)
         self.assertEqual(len(s["hooks"]["Stop"]), 1)
+
+    def test_wire_keeps_a_preexisting_pretooluse_entry(self):
+        """Merging means appending to PreToolUse, not replacing it: another
+        hook already wired there must survive the --wire."""
+        with open(self.settings, "w") as fh:
+            json.dump({"hooks": {"PreToolUse": [{"matcher": "WebFetch", "hooks": [
+                {"type": "command", "command": "/bin/true"}]}]}}, fh)
+        self.run_install("--wire")
+        with open(self.settings) as fh:
+            entries = json.load(fh)["hooks"]["PreToolUse"]
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["matcher"], "WebFetch")
+        self.assertEqual(entries[1]["matcher"], "Write|Edit|Bash")
 
     def test_uninstall_removes_the_hook_and_leaves_settings(self):
         self.run_install("--wire")
