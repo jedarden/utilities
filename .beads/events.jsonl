@@ -28,3 +28,6 @@
 {"bead":"util-f3d12f17","duration_ms":3601945,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"explore","ts":"2026-09-15T16:29:24.422569800+00:00","worker":"glm-icg"}
 {"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a5e6-d91b-7641-84c0-052dd0348029","bead":"util-b65ff1a9","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-15T16:29:24.635643282+00:00","worker":"glm-tradegraph"}
 {"bead":"util-973720f1","duration_ms":3601469,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"explore","ts":"2026-09-15T16:32:32.651586750+00:00","worker":"glm-roam-22"}
+{"bead":"util-b65ff1a9","duration_ms":1814323,"event":"complete","exit_code":0,"outcome":"success","strand":"explore","ts":"2026-09-15T16:59:38.982103759+00:00","worker":"glm-tradegraph"}
+{"bead":"util-b65ff1a9","event":"claim","strand":"explore","ts":"2026-09-15T17:10:45.520727444+00:00","worker":"glm-tgp"}
+{"adapter":"claude-code-glm-5.3-flash","attempt_id":"01a0a60c-b556-78c0-9e82-a881271179ba","bead":"util-b65ff1a9","event":"dispatch","model":"glm-5.3-flash","strand":"explore","ts":"2026-09-15T17:10:45.846751107+00:00","worker":"glm-tgp"}
