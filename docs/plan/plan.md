@@ -29,7 +29,19 @@ tool; nothing shared between folders except the license and this plan.
   runtime so the test file itself never contains a token-shaped literal.
 - `bin/bao-as` — `bao-as <instance> <command...>`: AppRole login to one
   named OpenBao/Vault instance with credentials passed as `@file`, then
-  `exec` the command with the token only in its environment.
+  `exec` the command with the token only in its environment. Refuses to
+  start when a credential file is missing or readable by group/other —
+  mode 0600 is enforced, not advisory.
+- `bin/test_bao_as.py` — unittest suite for the wrapper. Runs it against a
+  stub `bao` placed first on `PATH` and a throwaway `BAO_AS_CONFIG_DIR`,
+  then inspects what actually happened: the login argv carries
+  `role_id=@`/`secret_id=@` and never the values, the issued token exists
+  only in the child's environment (a stale inherited one does not survive)
+  and is never printed, `exec` preserves the child's exit code and stdio,
+  and missing or group/other-readable credential files fail closed before
+  the CLI runs. `BAO_AS_UNDER_TEST` points the suite at another copy of the
+  script. Fixtures are built at runtime so no credential-shaped literal
+  sits in this file either.
 - `policies/*.hcl` — prefix-scoped policy templates: agent read/write on
   one prefix, writer on one prefix, reader on one prefix, and the superuser
   carve-outs (`sys/audit*`, `sys/seal`, `sys/step-down` denied).

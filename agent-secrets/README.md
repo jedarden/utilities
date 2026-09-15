@@ -33,7 +33,8 @@ via `BAO_AS_BIN=vault`) CLI.
 Run the tests:
 
 ```bash
-python3 -m unittest discover -s ~/utilities/agent-secrets/hooks -v
+python3 -m unittest discover -s ~/utilities/agent-secrets/hooks -v   # credential-guard suite
+python3 -m unittest discover -s ~/utilities/agent-secrets/bin -v     # bao-as suite (stub `bao`; contacts no store)
 ```
 
 ## The hook
@@ -84,6 +85,10 @@ is one bug away from nothing.
 ~/.config/bao-as/<name>/role_id     mode 0600
 ~/.config/bao-as/<name>/secret_id   mode 0600
 ```
+
+The 0600 modes are enforced, not advisory: `bao-as` refuses to start when
+either file is missing or readable by group/other, before it contacts
+anything.
 
 ```bash
 bao-as prod bao kv metadata get secret/app/db          # verify by property: current_version

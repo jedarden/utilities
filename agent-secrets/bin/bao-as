@@ -56,6 +56,12 @@ if [ ! -r "$D/role_id" ] || [ ! -r "$D/secret_id" ]; then
   echo "bao-as: missing $D/role_id or $D/secret_id (mode 0600)" >&2
   exit 78   # EX_CONFIG
 fi
+# mode 0600 is the contract, not just the docs: refuse a credential that
+# group/other can read, before anything is sent anywhere
+if [ -n "$(find -L "$D/role_id" "$D/secret_id" -perm /0044 -print -quit 2>/dev/null)" ]; then
+  echo "bao-as: $D/role_id or $D/secret_id is group/other-readable; chmod 600 required" >&2
+  exit 78   # EX_CONFIG
+fi
 
 export BAO_ADDR="$ADDR" VAULT_ADDR="$ADDR"
 unset BAO_TOKEN VAULT_TOKEN || true
