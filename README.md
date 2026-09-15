@@ -7,12 +7,14 @@ folder is independent: it has its own README, its own `VERSION`, and its own
 | Folder | What it is |
 |---|---|
 | [`agent-secrets/`](agent-secrets/) | A credential guard hook for Claude Code, a login wrapper that keeps secret-store tokens out of argv, and prefix-scoped OpenBao/Vault policies — the pieces that let an agent read and write a secrets store without a value ever entering its transcript. |
+| [`org-rule-guard/`](org-rule-guard/) | An org-wide `PreToolUse` guard for Claude Code with a JSONL denial log, an installer, and example settings wiring — the same six rules as the live hook, plus the record of every deny the live hook never kept. |
 
 ## Installing one utility
 
 ```bash
 git clone https://github.com/jedarden/utilities ~/utilities
-~/utilities/agent-secrets/install.sh --help
+~/utilities/agent-secrets/install.sh --help    # credential guard hook, bao-as, policies
+~/utilities/org-rule-guard/install.sh --help   # PreToolUse guard, denial log, settings wiring
 ```
 
 ## Structure
