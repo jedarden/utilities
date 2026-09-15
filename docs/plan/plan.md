@@ -63,6 +63,11 @@ tool; nothing shared between folders except the license and this plan.
   `ORG_RULE_GUARD_UNDER_TEST` points the whole suite at any hook copy, so one
   fixture set proves both that the port matches the live hook and that the
   log behaves (the log tests skip against a hook that predates the log).
+  The `Install` class drives `install.sh` in a throwaway hooks dir / settings
+  path (plus one temp `$HOME` for the default destinations), covering every
+  contract clause above including the refusal paths: no overwrite without
+  `--force`, no settings write without `--wire`, `--uninstall` refusing a
+  file this folder did not install and leaving the denial log in place.
 - `install.sh` — idempotent copy into `~/.claude/hooks/`. Never overwrites a
   hook already at the destination and never touches `settings.json` without
   `--wire`; `--uninstall` refuses a file this folder did not install.
@@ -80,7 +85,10 @@ JSONL, one record per deny, never read back by the hook that writes it.
 ## Implementation Phases
 
 - [x] Phase 1: `agent-secrets` — hook, wrapper, policies, tests, installer
-- [ ] Phase 2: CI on Argo Workflows (unittest + shellcheck) — no GitHub Actions
+- [x] Phase 2: CI on Argo Workflows (unittest + shellcheck) — no GitHub
+  Actions — shipped 2026-09-15 as `utilities-ci` (WorkflowTemplate + Forgejo
+  push sensor; runs both unittest suites and shellcheck on every push to
+  main, including the org-rule-guard installer contract)
 - [ ] Phase 3: `org-rule-guard` — extract the working PreToolUse hook from
   `~/.claude/hooks/org-rule-guard.py` (332 lines, six hard-coded rules, one
   stdout deny path, no log). Two changes, in this order: (a) every denial
