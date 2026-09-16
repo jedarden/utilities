@@ -16,7 +16,12 @@ tool; nothing shared between folders except the license and this plan.
   locations (`~/.claude/hooks/`, `~/.local/bin/`); it never edits a file it
   did not create unless asked with an explicit flag.
 - Versioning is per folder (`<utility>/VERSION`, semver). Git tags are
-  `<utility>/vX.Y.Z`.
+  `<utility>/vX.Y.Z`. The contract is enforced by `scripts/check-versions.sh`
+  (run by utilities-ci on every push): every VERSION at HEAD must have a tag
+  at exactly its version, and every `<utility>/v*` tag must point at a commit
+  whose VERSION agrees. Releasing means committing the bump and pushing
+  commit and tag together — `git push origin main <utility>/v<X.Y.Z>` —
+  since pushing the commit alone fails CI until the tag lands.
 
 ## Components
 
@@ -88,7 +93,9 @@ JSONL, one record per deny, never read back by the hook that writes it.
 - [x] Phase 2: CI on Argo Workflows (unittest + shellcheck) — no GitHub
   Actions — shipped 2026-09-15 as `utilities-ci` (WorkflowTemplate + Forgejo
   push sensor; runs both unittest suites and shellcheck on every push to
-  main, including the org-rule-guard installer contract)
+  main, including the org-rule-guard installer contract). Since 2026-09-16
+  it also runs `scripts/check-versions.sh` to enforce the VERSION↔tag
+  contract (see Architecture).
 - [ ] Phase 3: `org-rule-guard` — extract the working PreToolUse hook from
   `~/.claude/hooks/org-rule-guard.py` (332 lines, six hard-coded rules, one
   stdout deny path, no log). Two changes, in this order: (a) every denial

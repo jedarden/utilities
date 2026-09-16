@@ -20,6 +20,9 @@ git clone https://github.com/jedarden/utilities ~/utilities
 ## Structure
 
 - `<utility>/` — one folder per tool, each self-contained
+- `scripts/` — repo tooling, not a utility: `check-versions.sh` verifies each
+  `<utility>/VERSION` has a matching `<utility>/vX.Y.Z` tag (CI runs it on
+  every push)
 - `docs/notes/` — features, constraints, design decisions
 - `docs/research/` — external reference material and prior art
 - `docs/plan/plan.md` — complete plan for the repo
