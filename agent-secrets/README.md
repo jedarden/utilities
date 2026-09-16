@@ -26,15 +26,19 @@ git clone https://github.com/jedarden/utilities ~/utilities
 ```
 
 Without `--wire` the script prints the `settings.json` snippet instead of
-editing anything. `--uninstall` removes what it installed. Python 3 and bash
-are the only dependencies; `bao-as` additionally needs the `bao` (or `vault`,
-via `BAO_AS_BIN=vault`) CLI.
+editing anything, and it never replaces a hook or `bao-as` copy already at a
+destination without `--force`. `--uninstall` removes what it installed,
+refusing a file this folder did not install unless `--force` is given, and
+leaves `settings.json` and `~/.config/bao-as/` (your credential files)
+untouched. Python 3 and bash are the only dependencies; `bao-as` additionally
+needs the `bao` (or `vault`, via `BAO_AS_BIN=vault`) CLI.
 
 Run the tests:
 
 ```bash
-python3 -m unittest discover -s ~/utilities/agent-secrets/hooks -v   # credential-guard suite
-python3 -m unittest discover -s ~/utilities/agent-secrets/bin -v     # bao-as suite (stub `bao`; contacts no store)
+python3 -m unittest discover -s ~/utilities/agent-secrets/hooks -v     # credential-guard suite
+python3 -m unittest discover -s ~/utilities/agent-secrets/bin -v       # bao-as suite (stub `bao`; contacts no store)
+python3 -m unittest discover -s ~/utilities/agent-secrets/policies -v  # policy-template suite (HCL grammar check)
 ```
 
 ## The hook
@@ -132,6 +136,12 @@ chmod 600 ~/.config/bao-as/prod/*
 - `superuser-carveouts.hcl` — attach alongside any broad policy. `deny` wins
   over `sudo`, so an identity with "everything" still cannot disable the
   audit device or seal the store.
+
+Every template is checked against the HCL grammar OpenBao's policy loader
+accepts by `policies/test_policies.py` — a stdlib tokenizer + parser, no
+OpenBao binary needed — so a syntax error fails CI instead of surfacing the
+first time someone runs `bao policy write`. The same suite pins each
+template to the grant table above.
 
 Turn on check-and-set for the mount so racing writers get a 400 instead of a
 silent overwrite: `bao write secret/config cas_required=true max_versions=20`.

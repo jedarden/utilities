@@ -50,6 +50,27 @@ tool; nothing shared between folders except the license and this plan.
 - `policies/*.hcl` — prefix-scoped policy templates: agent read/write on
   one prefix, writer on one prefix, reader on one prefix, and the superuser
   carve-outs (`sys/audit*`, `sys/seal`, `sys/step-down` denied).
+- `policies/test_policies.py` — stdlib tokenizer + recursive-descent parser
+  for the policy grammar OpenBao's loader accepts (the `vault/policy.go`
+  rule-key set), plus the broken-policy fixtures that prove it rejects.
+  Every template must parse and must match its documented grant, so a
+  syntax error fails CI instead of surfacing at `bao policy write` time.
+- `install.sh` — idempotent copy to the conventional destinations: the hook
+  to `~/.claude/hooks/credential-guard.py`, the wrapper to
+  `~/.local/bin/bao-as`, and `~/.config/bao-as/instances.conf` seeded once
+  at 0600 inside a 0700 directory. It never overwrites a hook or wrapper
+  already at a destination without `--force` (or `--wire`, which replaces
+  and wires in one step) — a live copy may carry local edits only its
+  operator has seen — and never touches `settings.json` without `--wire`.
+  `--uninstall` refuses a file this folder did not install, all-or-nothing
+  so no half-uninstalled machine is left, and it never removes the bao-as
+  config directory: the credential files there belong to the operator, and
+  `bao-as` re-enforces the 0600 modes at runtime. `CLAUDE_HOOKS_DIR`,
+  `BIN_DIR`, `CLAUDE_SETTINGS` and `BAO_AS_CONFIG_DIR` override the
+  destinations; the `Install` class in `hooks/test_credential_guard.py`
+  drives all of it in a throwaway HOME / hooks dir / settings path, and
+  `CREDENTIAL_GUARD_UNDER_TEST` points the same fixtures at any installed
+  copy.
 - `examples/settings.json` — the hook wiring for `~/.claude/settings.json`.
 
 ### org-rule-guard (v0.1.0, Phase 3a)
@@ -92,8 +113,9 @@ JSONL, one record per deny, never read back by the hook that writes it.
 - [x] Phase 1: `agent-secrets` — hook, wrapper, policies, tests, installer
 - [x] Phase 2: CI on Argo Workflows (unittest + shellcheck) — no GitHub
   Actions — shipped 2026-09-15 as `utilities-ci` (WorkflowTemplate + Forgejo
-  push sensor; runs both unittest suites and shellcheck on every push to
-  main, including the org-rule-guard installer contract). Since 2026-09-16
+  push sensor; runs the unittest suites and shellcheck on every push to
+  main, including the org-rule-guard installer contract). Grew the
+  policy-template HCL validation suite on 2026-09-16. Since 2026-09-16
   it also runs `scripts/check-versions.sh` to enforce the VERSION↔tag
   contract (see Architecture).
 - [ ] Phase 3: `org-rule-guard` — extract the working PreToolUse hook from
