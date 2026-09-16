@@ -38,3 +38,5 @@
 {"adapter":"claude-code-glm-5.3","attempt_id":"01a0a681-1a56-7753-a135-97a4d8861929","bead":"util-973720f1","event":"dispatch","model":"glm-5.3","strand":"explore","ts":"2026-09-15T19:17:53.878579397+00:00","worker":"glm-seam"}
 {"bead":"util-f3d12f17","duration_ms":3601473,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"explore","ts":"2026-09-15T19:42:45.091442686+00:00","worker":"glm-roam-24"}
 {"bead":"util-973720f1","duration_ms":3601580,"event":"timeout","exit_code":124,"outcome":"timeout","strand":"explore","ts":"2026-09-15T20:17:55.483893253+00:00","worker":"glm-seam"}
+{"bead":"util-f3d12f17","event":"claim","strand":"explore","ts":"2026-09-15T23:50:23.758549246+00:00","worker":"glm-roam-24"}
+{"adapter":"claude-code-glm-5.3","attempt_id":"01a0a77a-95fc-7000-b3db-d16776fe7ce6","bead":"util-f3d12f17","event":"dispatch","model":"glm-5.3","strand":"explore","ts":"2026-09-15T23:50:23.996194310+00:00","worker":"glm-roam-24"}
