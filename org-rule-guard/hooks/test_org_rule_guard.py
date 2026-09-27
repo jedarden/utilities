@@ -22,6 +22,8 @@ the live hook too, so running this suite never appends synthetic denials to
 a real log.
 """
 import importlib.util
+import contextlib
+import io
 import json
 import multiprocessing
 import os
@@ -185,15 +187,24 @@ def invoke(payload, state_home=None):
     sh = state_home or tempfile.mkdtemp(prefix="org-rule-guard-test-")
     if sh not in _CLEANUP:
         _CLEANUP.append(sh)
-    env = dict(os.environ)
-    env["XDG_STATE_HOME"] = sh
-    env.pop("ORG_RULE_GUARD_STATE_DIR", None)
-    proc = subprocess.run([sys.executable, HOOK], input=json.dumps(payload).encode(),
-                          capture_output=True, env=env, timeout=20)
+    proc, log_path = invoke_raw(json.dumps(payload).encode(), state_home=sh)
     assert proc.returncode == 0, "%s exited %s: %s" % (HOOK, proc.returncode, proc.stderr.decode())
     out = proc.stdout.decode().strip()
     decision = json.loads(out) if out else None
-    return decision, os.path.join(sh, "org-rule-guard", "denials.jsonl")
+    return decision, log_path
+
+
+def invoke_raw(raw, state_home=None):
+    """Run the hook with exact stdin bytes and return its process and log path."""
+    sh = state_home or tempfile.mkdtemp(prefix="org-rule-guard-test-")
+    if sh not in _CLEANUP:
+        _CLEANUP.append(sh)
+    env = dict(os.environ)
+    env["XDG_STATE_HOME"] = sh
+    env.pop("ORG_RULE_GUARD_STATE_DIR", None)
+    proc = subprocess.run([sys.executable, HOOK], input=raw,
+                          capture_output=True, env=env, timeout=20)
+    return proc, os.path.join(sh, "org-rule-guard", "denials.jsonl")
 
 
 def denied(decision):
@@ -279,18 +290,71 @@ class Decisions(unittest.TestCase):
                 self.assertEqual(output["permissionDecision"], "deny")
                 self.assertTrue(output["permissionDecisionReason"])
 
-    def test_garbage_input_fails_open(self):
-        for payload in ("not json", "[1, 2]", "{}", {"tool_name": "Bash"},
-                        {"tool_name": "Write", "tool_input": {}}):
+    def assert_fail_open_without_log_record(self, raw):
+        proc, log_path = invoke_raw(raw)
+        self.assertEqual(proc.returncode, 0)
+        # Failing open must stay silent: no deny JSON, nothing to parse.
+        self.assertEqual(proc.stdout.decode().strip(), "")
+        # No malformed or partial JSONL record may be created for an allow.
+        self.assertEqual(log_records(log_path), [])
+
+    def test_malformed_json_fails_open_without_log_record(self):
+        for raw in (b"not json", b"{\"tool_name\":", b"[1, 2]"):
+            with self.subTest(raw=raw):
+                self.assert_fail_open_without_log_record(raw)
+
+    def test_missing_or_empty_tool_input_fails_open_without_log_record(self):
+        payloads = (
+            {"tool_name": "Bash"},
+            {"tool_name": "Bash", "tool_input": None},
+            {"tool_name": "Write", "tool_input": {}},
+        )
+        for payload in payloads:
             with self.subTest(payload=payload):
-                raw = json.dumps(payload) if not isinstance(payload, str) else payload
-                proc = subprocess.run(
-                    [sys.executable, HOOK], input=raw.encode(),
-                    capture_output=True, timeout=20, env=isolated_env(),
-                )
-                self.assertEqual(proc.returncode, 0)
-                # Failing open must stay silent: no deny JSON, nothing to parse.
-                self.assertEqual(proc.stdout.decode().strip(), "")
+                self.assert_fail_open_without_log_record(json.dumps(payload).encode())
+
+    @unittest.skipUnless(
+        hasattr(guard, "SUPPORTED_TOOLS"),
+        "live hook predates the explicit supported-tool boundary",
+    )
+    def test_unexpected_tool_name_fails_open_without_log_record(self):
+        payloads = (
+            {"tool_name": "FutureTool", "tool_input": {
+                "file_path": WORKFLOWS_PATH,
+                "content": "name: build\non: push\n",
+            }},
+            {"tool_name": "", "tool_input": {
+                "command": KUBECTL_DELETE,
+            }},
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                self.assert_fail_open_without_log_record(json.dumps(payload).encode())
+
+    def test_unreadable_stdin_fails_open_without_log_record(self):
+        class UnreadableStdin:
+            def read(self, *_args, **_kwargs):
+                raise OSError("stdin is unavailable")
+
+        state_home = tempfile.mkdtemp(prefix="org-rule-guard-test-")
+        _CLEANUP.append(state_home)
+        log_path = os.path.join(state_home, "org-rule-guard", "denials.jsonl")
+        old_state_dir = os.environ.get("ORG_RULE_GUARD_STATE_DIR")
+        old_stdin = guard.sys.stdin
+        try:
+            os.environ["ORG_RULE_GUARD_STATE_DIR"] = os.path.dirname(log_path)
+            guard.sys.stdin = UnreadableStdin()
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                result = guard.main()
+        finally:
+            guard.sys.stdin = old_stdin
+            if old_state_dir is None:
+                os.environ.pop("ORG_RULE_GUARD_STATE_DIR", None)
+            else:
+                os.environ["ORG_RULE_GUARD_STATE_DIR"] = old_state_dir
+        self.assertEqual(result, guard.ALLOW)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(log_records(log_path), [])
 
     def test_internal_error_fails_open(self):
         """A body that explodes the checker still allows, exit 0."""

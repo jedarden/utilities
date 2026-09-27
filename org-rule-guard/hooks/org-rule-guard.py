@@ -73,6 +73,7 @@ RULE_IDS = (
     RULE_MUTATING_KUBECTL, RULE_CREDENTIAL, RULE_COMMIT_ALL,
     RULE_COMMIT_NO_PATHSPEC, RULE_GIT_ADD_ALL,
 )
+SUPPORTED_TOOLS = ("Write", "Edit", "MultiEdit", "Bash")
 
 # The hook input for this invocation, kept for the denial log (session_id,
 # cwd, tool). A hook process handles exactly one tool call, so a module
@@ -560,10 +561,12 @@ def main():
     if not isinstance(payload, dict):
         return ALLOW
     _PAYLOAD.update(payload)
+    tool = payload.get("tool_name") or ""
+    if tool not in SUPPORTED_TOOLS:
+        return ALLOW
     ti = payload.get("tool_input")
     if not isinstance(ti, dict):
         return ALLOW
-    tool = payload.get("tool_name") or ""
     try:
         if tool == "Bash":
             check_bash(ti.get("command") or "")

@@ -63,12 +63,14 @@ stdout with this shape:
 }
 ```
 
-Allowed calls are silent and exit 0. Malformed input, an unparseable shell
-segment, or an internal error exits 0 without output; the hook fails open for
-unexpected conditions. A denial-log write failure does not change a matching
-deny: the hook still emits the deny JSON and exits 0. The implementation of
-this protocol is [`deny()`](hooks/org-rule-guard.py#L77) and
-[`main()`](hooks/org-rule-guard.py#L462).
+Allowed calls are silent and exit 0. The fail-open input contract covers
+malformed or unreadable stdin, non-object JSON, missing or empty `tool_input`,
+and missing or unexpected `tool_name` values: each case allows the call,
+writes nothing to stdout, and does not create or append a denial-log record.
+An unparseable shell segment or other internal error has the same result. A
+denial-log write failure does not change a matching deny: the hook still emits
+the deny JSON and exits 0. The implementation of this protocol is
+[`deny()`](hooks/org-rule-guard.py#L77) and [`main()`](hooks/org-rule-guard.py#L463).
 
 ## Settings wiring
 
@@ -233,15 +235,16 @@ replacement here has one either.
 
 ## Failing open
 
-Malformed input, an unparseable shell segment, an internal error, anything
-unexpected → allow, exit 0, no output. A NEEDLE fleet must never be wedged by
-its own guard: a missed violation is recoverable, a stuck fleet is not. The
-log inherits the same contract and is strictly best-effort — `deny()` attempts
-the write inside a bare `except` and emits its decision regardless, so an
-unwritable log (a full disk, a vanished home, a state path that is a regular
-file) still denies, never allows. A rule that stops firing because logging
-broke would be a silent loss of enforcement; that is why the log can change
-nothing.
+Malformed or unreadable input, missing or empty `tool_input`, an unexpected
+tool name, an unparseable shell segment, an internal error, anything
+unexpected → allow, exit 0, no output, and no denial-log record. A NEEDLE fleet
+must never be wedged by its own guard: a missed violation is recoverable, a
+stuck fleet is not. The log inherits the same best-effort boundary for denied
+calls — `deny()` attempts the write inside a bare `except` and emits its
+decision regardless, so an unwritable log (a full disk, a vanished home, a
+state path that is a regular file) still denies, never allows. A rule that
+stops firing because logging broke would be a silent loss of enforcement; that
+is why the log can change nothing.
 
 ## Tests
 
@@ -260,7 +263,7 @@ defaulting to this copy — the same fixtures prove the port matches the live
 hook and that the log behaves:
 
 ```bash
-# decisions + log + installer, against the ported copy   (47 tests)
+# decisions + log + installer, against the ported copy   (50 tests)
 python3 -m unittest discover -s ~/utilities/org-rule-guard/hooks
 
 # same suite, against the live hook                      (log tests skipped if unsupported)
@@ -272,6 +275,11 @@ The denial-log tests are skipped against the live hook because it predates the
 log (`LOGS = hasattr(guard, "log_denial")`), not because they would fail. Every
 run points `XDG_STATE_HOME` at a throwaway directory, so running the suite
 never appends synthetic denials to a real log.
+
+The explicit supported-tool boundary test is also skipped when the installed
+live hook predates that utility-side guard (`SUPPORTED_TOOLS` is absent). The
+ported copy always runs it, including a rule-shaped payload for an unexpected
+tool name.
 
 The cross-utility composition test runs from the repository root and invokes
 both hook files against the same payloads, including both hook orders:
