@@ -61,8 +61,8 @@ def placeholder(prefix, n=40):
 PEM_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
 
 
-def run_hook(payload, env=None):
-    """Run the hook as Claude Code would: JSON on stdin, decision on stdout."""
+def run_hook_process(payload, env=None):
+    """Run the hook as Claude Code would and return its completed process."""
     e = dict(os.environ)
     config_home = tempfile.mkdtemp()
     state_home = tempfile.mkdtemp()
@@ -71,10 +71,15 @@ def run_hook(payload, env=None):
     e["XDG_STATE_HOME"] = state_home     # never write the operator's log
     if env:
         e.update(env)
-    proc = subprocess.run(
+    return subprocess.run(
         [sys.executable, HOOK], input=json.dumps(payload).encode(),
         capture_output=True, env=e, timeout=20,
     )
+
+
+def run_hook(payload, env=None):
+    """Run the hook as Claude Code would: JSON on stdin, decision on stdout."""
+    proc = run_hook_process(payload, env)
     assert proc.returncode == 0, proc.stderr.decode()
     out = proc.stdout.decode().strip()
     return json.loads(out) if out else None
@@ -331,16 +336,56 @@ class HookProcess(unittest.TestCase):
         self.assertIsNone(result)
         self.assertFalse(os.path.exists(os.path.join(state, "denials.jsonl")))
 
-    def test_log_failure_does_not_change_deny(self):
-        state_parent = tempfile.mkdtemp(prefix="credential-guard-log-failure-")
-        _CLEANUP.append(state_parent)
-        state_file = os.path.join(state_parent, "not-a-directory")
-        with open(state_file, "w", encoding="utf-8") as fh:
+    def test_failed_log_persistence_preserves_deny_without_exposing_value(self):
+        secret = token("ghp_")
+        payload = {"tool_name": "Bash", "tool_input": {
+            "command": "printf '%s' '" + secret + "'"}}
+
+        healthy_state = tempfile.mkdtemp(prefix="credential-guard-log-healthy-")
+        _CLEANUP.append(healthy_state)
+        expected = run_hook_process(payload, {
+            "CREDENTIAL_GUARD_STATE_DIR": healthy_state,
+        })
+        self.assertEqual(expected.returncode, 0, expected.stderr.decode())
+        expected_result = json.loads(expected.stdout.decode())
+        self.assertTrue(denied(expected_result))
+
+        unavailable_parent = tempfile.mkdtemp(
+            prefix="credential-guard-log-unavailable-")
+        _CLEANUP.append(unavailable_parent)
+        unavailable_marker = os.path.join(unavailable_parent, "not-a-directory")
+        with open(unavailable_marker, "w", encoding="utf-8") as fh:
             fh.write("operator data")
-        result = run_hook({"tool_name": "Bash", "tool_input": {
-            "command": "printf '%s' '" + token("ghp_") + "'"}},
-            {"CREDENTIAL_GUARD_STATE_DIR": state_file})
-        self.assertTrue(denied(result))
+
+        unwritable_state = tempfile.mkdtemp(
+            prefix="credential-guard-log-unwritable-")
+        _CLEANUP.append(unwritable_state)
+        os.symlink("/dev/full", os.path.join(unwritable_state, guard.LOG_NAME))
+
+        malformed_parent = tempfile.mkdtemp(
+            prefix="credential-guard-log-malformed-")
+        _CLEANUP.append(malformed_parent)
+        malformed_state = os.path.join(malformed_parent, "not-a-directory")
+        with open(malformed_state, "w", encoding="utf-8") as fh:
+            fh.write("operator data")
+
+        destinations = (
+            ("unavailable", os.path.join(unavailable_marker, "state")),
+            ("unwritable", unwritable_state),
+            ("malformed", malformed_state),
+        )
+        for label, destination in destinations:
+            with self.subTest(destination=label):
+                failed = run_hook_process(payload, {
+                    "CREDENTIAL_GUARD_STATE_DIR": destination,
+                })
+                self.assertEqual(failed.returncode, 0,
+                                 failed.stderr.decode())
+                self.assertEqual(failed.stderr, b"")
+                result = json.loads(failed.stdout.decode())
+                self.assertEqual(result, expected_result)
+                self.assertNotIn(secret, failed.stdout.decode())
+                self.assertNotIn(secret, failed.stderr.decode())
 
     def test_bash_by_reference_allowed(self):
         r = run_hook({"tool_name": "Bash", "tool_input": {
