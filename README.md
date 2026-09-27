@@ -31,6 +31,32 @@ git clone --branch org-rule-guard/v0.1.0 --depth 1 \
 Replace `v0.1.0` with the released version you want. The utility-specific
 README is the contract for upgrading and removing an installed copy.
 
+### Composing both guards with an existing settings file
+
+[`docs/examples/settings-both.json`](docs/examples/settings-both.json) shows
+the resulting `PreToolUse` entries, but it is a reference snippet, not a
+replacement for a user's settings file. To merge both guards into an existing
+`settings.json`, run both installers with the same `CLAUDE_SETTINGS` path:
+
+```bash
+SETTINGS="$HOME/.claude/settings.json"
+cp "$SETTINGS" "$SETTINGS.bak"
+
+CLAUDE_SETTINGS="$SETTINGS" \
+  ~/utilities-org-rule-guard/org-rule-guard/install.sh --wire
+CLAUDE_SETTINGS="$SETTINGS" \
+  ~/utilities-agent-secrets/agent-secrets/install.sh --wire
+```
+
+Each `--wire` run reads the current JSON, preserves every existing top-level
+setting, `hooks` event, and hook entry, then appends only its own
+`PreToolUse` entry when that exact command is not already present. Running the
+two commands again is safe: both installers report `already` and leave the
+settings file unchanged. Do not copy `settings-both.json` over an existing
+file or concatenate the two JSON objects; doing so can discard unrelated
+settings and hooks. If a non-default settings path is used, pass that same
+path through `CLAUDE_SETTINGS` on every run.
+
 ## Structure
 
 - `<utility>/` — one folder per tool, each self-contained

@@ -87,12 +87,18 @@ class SelectiveInstallTests(unittest.TestCase):
             env.pop(name, None)
         return env
 
-    def run_install(self, checkout, utility, home, runtime):
+    def run_install(self, checkout, utility, home, runtime, mode=None, settings=None):
         script = checkout / utility / "install.sh"
+        command = ["/bin/sh", str(script)]
+        if mode is not None:
+            command.append(mode)
+        environment = self.clean_environment(home)
+        if settings is not None:
+            environment["CLAUDE_SETTINGS"] = str(settings)
         return subprocess.run(
-            ["/bin/sh", str(script)],
+            command,
             cwd=runtime,
-            env=self.clean_environment(home),
+            env=environment,
             capture_output=True,
             text=True,
             timeout=30,
@@ -325,6 +331,76 @@ class SelectiveInstallTests(unittest.TestCase):
             "GitHub token",
             credential_decision["hookSpecificOutput"]["permissionDecisionReason"],
         )
+
+    def test_combined_wire_merges_existing_settings_idempotently(self):
+        """Both --wire runs preserve unrelated hooks and do not duplicate entries."""
+        checkout = self.stage_checkout()
+        home = self.temp_dir("combined-wire-home-")
+        runtime = self.temp_dir("combined-wire-runtime-")
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        original = {
+            "permissions": {"allow": ["Read"]},
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "printf session-start",
+                    }],
+                }],
+                "PreToolUse": [{
+                    "matcher": "Read",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "printf existing-pretooluse",
+                    }],
+                }],
+                "PostToolUse": [{
+                    "matcher": "Write",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "printf post-tooluse",
+                    }],
+                }],
+            },
+        }
+        settings.write_text(json.dumps(original, indent=2) + "\n", encoding="utf-8")
+
+        for utility in ("org-rule-guard", "agent-secrets"):
+            result = self.run_install(
+                checkout, utility, home, runtime, mode="--wire", settings=settings
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        after_first_wire = settings.read_bytes()
+        merged = json.loads(after_first_wire)
+        self.assertEqual(merged["permissions"], original["permissions"])
+        self.assertEqual(
+            merged["hooks"]["SessionStart"], original["hooks"]["SessionStart"]
+        )
+        self.assertEqual(
+            merged["hooks"]["PostToolUse"], original["hooks"]["PostToolUse"]
+        )
+        self.assertEqual(
+            merged["hooks"]["PreToolUse"][:1], original["hooks"]["PreToolUse"]
+        )
+        self.assertEqual(
+            [entry["hooks"][0]["command"]
+             for entry in merged["hooks"]["PreToolUse"]],
+            [
+                "printf existing-pretooluse",
+                f"python3 {home / '.claude/hooks/org-rule-guard.py'}",
+                f"python3 {home / '.claude/hooks/credential-guard.py'}",
+            ],
+        )
+
+        for utility in ("org-rule-guard", "agent-secrets"):
+            result = self.run_install(
+                checkout, utility, home, runtime, mode="--wire", settings=settings
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("already", result.stdout)
+        self.assertEqual(settings.read_bytes(), after_first_wire)
 
     def test_declared_bundle_installs_and_runs_without_checkout(self):
         declaration = self.bundle_declaration()
