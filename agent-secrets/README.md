@@ -39,7 +39,12 @@ The same command works with any released `agent-secrets/vX.Y.Z` tag. Without
 anything, and it never replaces a hook or `bao-as` copy already at a
 destination without `--force`. `--wire` is the upgrade mode: it replaces the
 installed hook and `bao-as` with the copies from the selected checkout and
-merges the hook entry into `settings.json`.
+merges or upgrades the hook entry in `settings.json`. The entry is identified
+by its exact command. If its matcher or timeout differs from this release,
+`--wire` preserves and reports a customized entry rather than clobbering it;
+use `--wire --force` as the explicit escape hatch to replace those wiring
+fields. If the command is absent, the entry is appended. Re-running with the
+current matcher (`Write|Edit|MultiEdit|Bash`) and no timeout is a no-op.
 
 The settings merge is protected by an exclusive advisory lock at
 `$CLAUDE_SETTINGS.lock` (or `~/.claude/settings.json.lock`), which is kept so

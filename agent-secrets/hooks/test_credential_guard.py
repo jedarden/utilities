@@ -722,6 +722,54 @@ class Install(unittest.TestCase):
                          "python3 %s" % self.hook_dst())
         self.assertFalse(os.path.exists(self.settings + ".bak"), out)
 
+    def test_wire_preserves_a_user_modified_entry(self):
+        custom = {
+            "hooks": {"PreToolUse": [{
+                "matcher": "Write|Edit",
+                "description": "operator policy",
+                "hooks": [{
+                    "type": "command",
+                    "command": "python3 %s" % self.hook_dst(),
+                    "timeout": 5,
+                }],
+            }]},
+        }
+        with open(self.settings, "w") as fh:
+            json.dump(custom, fh)
+
+        result = self.run_install_raw("--wire")
+
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        with open(self.settings) as fh:
+            self.assertEqual(json.load(fh), custom)
+        self.assertIn("customized", result.stderr.decode())
+        self.assertFalse(os.path.exists(self.settings + ".bak"))
+
+    def test_wire_force_refreshes_a_user_modified_entry(self):
+        custom = {
+            "hooks": {"PreToolUse": [{
+                "matcher": "Write|Edit",
+                "description": "operator policy",
+                "hooks": [{
+                    "type": "command",
+                    "command": "python3 %s" % self.hook_dst(),
+                    "timeout": 5,
+                }],
+            }]},
+        }
+        with open(self.settings, "w") as fh:
+            json.dump(custom, fh)
+
+        result = self.run_install_raw("--wire", "--force")
+
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        with open(self.settings) as fh:
+            entry = json.load(fh)["hooks"]["PreToolUse"][0]
+        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertNotIn("timeout", entry["hooks"][0])
+        self.assertEqual(entry["description"], "operator policy")
+        self.assertIn("refreshed", result.stdout.decode())
+
     def test_wire_rejects_a_nonexistent_settings_parent(self):
         settings = os.path.join(self.root, "missing", "settings.json")
         env = dict(self.env, CLAUDE_SETTINGS=settings)

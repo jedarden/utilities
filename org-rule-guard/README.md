@@ -108,6 +108,14 @@ settings.
 bundle, and merges this same entry. A bare `install.sh` prints it without
 changing settings; it still stages the bundle when it installs.
 
+The entry is identified by its exact command. A current entry uses the
+`Write|Edit|MultiEdit|Bash` matcher and timeout `10`, so re-running `--wire`
+is a no-op. The pre-MultiEdit shipped entry (`Write|Edit|Bash`, timeout `10`)
+is recognized and refreshed in place during an upgrade. Any other same-command
+matcher or timeout is treated as an operator customization, preserved, and
+reported; use `--wire --force` as the explicit escape hatch to replace those
+wiring fields. If the command is absent, `--wire` appends the entry.
+
 The settings merge is protected by an exclusive advisory lock at
 `$CLAUDE_SETTINGS.lock` (or `~/.claude/settings.json.lock`), which is kept so
 concurrent `--wire` runs use the same lock. The lock covers reading, merging,
@@ -218,7 +226,9 @@ bare run never overwrites it: it prints the destination, says `not overwritten`,
 and leaves the deployed copy alone. `--force` replaces it with this copy;
 `--wire` replaces it and merges the settings entry in one step. `--wire` also
 refreshes the pinned `agent-secrets` credential-guard bundle from the selected
-release checkout. Python 3 and bash are the only dependencies.
+release checkout and upgrades known legacy settings wiring. Python 3 and bash
+are the only dependencies. Customized matcher/timeout fields are preserved by
+default; use `--wire --force` when the selected release should replace them.
 
 ### Pin, upgrade, and remove
 

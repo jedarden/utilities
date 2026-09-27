@@ -46,12 +46,17 @@ CLAUDE_SETTINGS="$SETTINGS" \
   ~/utilities-agent-secrets/agent-secrets/install.sh --wire
 ```
 
-Each `--wire` run reads the current JSON, preserves every existing top-level
-setting, `hooks` event, and hook entry, then appends only its own
-`PreToolUse` entry when that exact command is not already present. Before the
-first run that changes an existing settings file, the installer creates
-`$SETTINGS.bak` if it does not already exist. That backup is the pre-wiring
-file: the second installer and later `--wire` runs leave it untouched. If the
+Each `--wire` run reads the current JSON and preserves every existing
+top-level setting, `hooks` event, and unrelated hook entry. It identifies its
+own `PreToolUse` entry by the exact command: a current matcher/timeout is left
+alone, while a known legacy shipped entry is refreshed in place. A same-command
+entry with any other matcher or timeout is treated as customized, left
+untouched, and reported; use `--wire --force` when that customization should
+be replaced deliberately. If no matching command exists, the installer
+appends its entry. Before the first run that changes an existing settings file,
+the installer creates `$SETTINGS.bak` if it does not already exist. That backup
+is the pre-wiring file: the second installer and later `--wire` runs leave it
+untouched. If the
 settings file does not exist yet, the installer creates it without a backup
 because there is no prior file to preserve. Do not rerun a manual `cp` over
 the backup, and do not copy `settings-both.json` over an existing file or

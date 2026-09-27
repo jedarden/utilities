@@ -3,8 +3,9 @@
 #
 #   ./install.sh                copy the hook; never overwrites one already there
 #   ./install.sh --force        overwrite an existing hook copy
-#   ./install.sh --wire         install (overwriting) and merge the PreToolUse
-#                               entry into ~/.claude/settings.json
+#   ./install.sh --wire         install (overwriting) and merge/upgrade the
+#                               PreToolUse entry into ~/.claude/settings.json
+#   ./install.sh --wire --force replace customized wiring fields too
 #   ./install.sh --uninstall    remove the installed hook (settings left alone)
 #
 # The credential guard is a pinned install-time bundle.  The source lives in
@@ -29,6 +30,8 @@ BUNDLE_DST="${HOOK_DST%.py}/credential-guard.py"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 force=0
 case " $* " in *" --force"*) force=1 ;; esac
+wire=0
+case " $* " in *" --wire"*) wire=1 ;; esac
 
 case "${1:-}" in
   -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
@@ -63,10 +66,9 @@ fi
 
 install -d -m 700 "$(dirname "$HOOK_DST")" "${HOOK_DST%.py}"
 
-mode="${1:-}"
 blocked=0
 for dst in "$HOOK_DST" "$BUNDLE_DST"; do
-  if [ -e "$dst" ] && [ "$mode" != "--wire" ] && [ "$mode" != "--force" ]; then
+  if [ -e "$dst" ] && [ "$wire" -ne 1 ] && [ "$force" -ne 1 ]; then
     echo "exists     $dst -- not overwritten"
     blocked=1
   fi
@@ -86,8 +88,8 @@ echo "bundled    $BUNDLE_DST (agent-secrets v$BUNDLE_VERSION)"
 echo "log        ${XDG_STATE_HOME:-$HOME/.local/state}/org-rule-guard/denials.jsonl  (256 KiB active cap, one rotated backup)"
 echo "credential ${XDG_STATE_HOME:-$HOME/.local/state}/credential-guard/denials.jsonl  (property-only, 256 KiB active cap)"
 
-if [ "$mode" = "--wire" ]; then
-  python3 - "$SETTINGS" "$HOOK_DST" <<'PY'
+if [ "$wire" -eq 1 ]; then
+  python3 - "$SETTINGS" "$HOOK_DST" "$force" <<'PY'
 import fcntl
 import json
 import os
@@ -95,12 +97,14 @@ import shutil
 import stat
 import sys
 import tempfile
-requested_path, hook = sys.argv[1], sys.argv[2]
+requested_path, hook, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 # Resolve aliases before taking the lock or replacing the file.  In
 # particular, os.replace() would otherwise replace a final-component symlink
 # instead of the settings file it names.
 path = os.path.realpath(requested_path)
 cmd = f"python3 {hook}"
+matcher = "Write|Edit|MultiEdit|Bash"
+legacy_matcher = "Write|Edit|Bash"
 lock_path = path + ".lock"
 settings_dir = os.path.dirname(os.path.abspath(path))
 settings_name = os.path.basename(path)
@@ -146,10 +150,64 @@ with open(lock_path, "a+") as lock:
         if not isinstance(s, dict):
             refuse_invalid_settings("top-level value must be a JSON object")
     pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
-    present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
-    if not present:
+    matching = []
+    for entry in pre:
+        if not isinstance(entry, dict):
+            continue
+        for handler in entry.get("hooks", []):
+            if isinstance(handler, dict) and handler.get("command") == cmd:
+                matching.append((entry, handler))
+
+    current = next(
+        ((entry, handler) for entry, handler in matching
+         if entry.get("matcher") == matcher and handler.get("timeout") == 10),
+        None,
+    )
+    legacy = next(
+        ((entry, handler) for entry, handler in matching
+         if entry.get("matcher") == legacy_matcher
+         and handler.get("timeout") == 10
+         and set(entry) == {"matcher", "hooks"}
+         and set(handler) == {"type", "command", "timeout"}),
+        None,
+    )
+    if current is not None:
+        print(f"already    {requested_path}")
+    elif legacy is not None or (matching and force):
         snapshot_backup()
-        pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
+        targets = [legacy] if legacy is not None else matching
+        for entry, handler in targets:
+            entry["matcher"] = matcher
+            handler["timeout"] = 10
+        print(f"refreshed  {requested_path}")
+        fd, tmp = tempfile.mkstemp(
+            prefix=f".{settings_name}.", suffix=".tmp", dir=settings_dir
+        )
+        try:
+            if source_mode is not None:
+                os.fchmod(fd, source_mode)
+            with os.fdopen(fd, "w") as fh:
+                fd = None
+                json.dump(s, fh, indent=2)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+            tmp = None
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+    elif matching:
+        print(f"preserved  {requested_path}: existing {cmd} wiring is customized; "
+              "use --wire --force to replace its matcher/timeout", file=sys.stderr)
+    else:
+        snapshot_backup()
+        pre.append({"matcher": matcher,
                     "hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
         fd, tmp = tempfile.mkstemp(
             prefix=f".{settings_name}.", suffix=".tmp", dir=settings_dir
@@ -174,8 +232,6 @@ with open(lock_path, "a+") as lock:
                 except FileNotFoundError:
                     pass
         print(f"wired      {requested_path}")
-    else:
-        print(f"already    {requested_path}")
 PY
 else
   echo

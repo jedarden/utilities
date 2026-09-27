@@ -4,8 +4,9 @@
 #   ./install.sh                copy the hook and bao-as; never overwrites
 #                               copies already there; print the settings snippet
 #   ./install.sh --force        overwrite existing hook / bao-as copies
-#   ./install.sh --wire         install (overwriting) and merge the PreToolUse
-#                               entry into ~/.claude/settings.json
+#   ./install.sh --wire         install (overwriting) and merge/upgrade the
+#                               PreToolUse entry into ~/.claude/settings.json
+#   ./install.sh --wire --force replace customized wiring fields too
 #   ./install.sh --uninstall    remove what this script installed (settings
 #                               and ~/.config/bao-as left alone)
 #
@@ -30,6 +31,8 @@ SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CONF_DIR="${BAO_AS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bao-as}"
 force=0
 case " $* " in *" --force"*) force=1 ;; esac
+wire=0
+case " $* " in *" --wire"*) wire=1 ;; esac
 
 refuse() {
   echo "install.sh: refusing to remove $1 -- it is not this copy's output," >&2
@@ -56,10 +59,9 @@ esac
 
 install -d -m 700 "$(dirname "$HOOK_DST")" "$(dirname "$BIN_DST")" "$CONF_DIR"
 
-mode="${1:-}"
 blocked=0
 for dst in "$HOOK_DST" "$BIN_DST"; do
-  if [ -e "$dst" ] && [ "$mode" != "--wire" ] && [ "$force" -ne 1 ]; then
+  if [ -e "$dst" ] && [ "$wire" -ne 1 ] && [ "$force" -ne 1 ]; then
     echo "exists     $dst -- not overwritten"
     blocked=1
   fi
@@ -81,8 +83,8 @@ echo "installed  $HOOK_DST"
 echo "installed  $BIN_DST"
 echo "instances  $CONF_DIR/instances.conf  (edit; put role_id/secret_id under $CONF_DIR/<name>/, mode 0600)"
 
-if [ "$mode" = "--wire" ]; then
-  python3 - "$SETTINGS" "$HOOK_DST" <<'PY'
+if [ "$wire" -eq 1 ]; then
+  python3 - "$SETTINGS" "$HOOK_DST" "$force" <<'PY'
 import fcntl
 import json
 import os
@@ -90,12 +92,13 @@ import shutil
 import stat
 import sys
 import tempfile
-requested_path, hook = sys.argv[1], sys.argv[2]
+requested_path, hook, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 # Resolve aliases before taking the lock or replacing the file.  In
 # particular, os.replace() would otherwise replace a final-component symlink
 # instead of the settings file it names.
 path = os.path.realpath(requested_path)
 cmd = f"python3 {hook}"
+matcher = "Write|Edit|MultiEdit|Bash"
 lock_path = path + ".lock"
 settings_dir = os.path.dirname(os.path.abspath(path))
 settings_name = os.path.basename(path)
@@ -141,11 +144,35 @@ with open(lock_path, "a+") as lock:
         if not isinstance(s, dict):
             refuse_invalid_settings("top-level value must be a JSON object")
     pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
-    present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
-    if not present:
+    matching = []
+    for entry in pre:
+        if not isinstance(entry, dict):
+            continue
+        for handler in entry.get("hooks", []):
+            if isinstance(handler, dict) and handler.get("command") == cmd:
+                matching.append((entry, handler))
+
+    current = next(
+        ((entry, handler) for entry, handler in matching
+         if entry.get("matcher") == matcher and "timeout" not in handler),
+        None,
+    )
+    if current is not None:
+        print(f"already    {requested_path}")
+    elif matching and not force:
+        print(f"preserved  {requested_path}: existing {cmd} wiring is customized; "
+              "use --wire --force to replace its matcher/timeout", file=sys.stderr)
+    else:
         snapshot_backup()
-        pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
-                    "hooks": [{"type": "command", "command": cmd}]})
+        if matching:
+            for entry, handler in matching:
+                entry["matcher"] = matcher
+                handler.pop("timeout", None)
+            print(f"refreshed  {requested_path}")
+        else:
+            pre.append({"matcher": matcher,
+                        "hooks": [{"type": "command", "command": cmd}]})
+            print(f"wired      {requested_path}")
         fd, tmp = tempfile.mkstemp(
             prefix=f".{settings_name}.", suffix=".tmp", dir=settings_dir
         )
@@ -168,9 +195,6 @@ with open(lock_path, "a+") as lock:
                     os.unlink(tmp)
                 except FileNotFoundError:
                     pass
-        print(f"wired      {requested_path}")
-    else:
-        print(f"already    {requested_path}")
 PY
 else
   echo
