@@ -96,17 +96,15 @@ the test suite supplies stubs and does not contact a store.
 
 ### Local verification
 
-These commands are the individual unittest suites described by the plan:
+Run unittest discovery for each utility directory so every `test_*.py` module
+in the directory is included automatically:
 
 ```bash
-python3 -m unittest discover -s agent-secrets/hooks -p 'test_credential_guard.py' -v
-python3 -m unittest discover -s agent-secrets/bin -p 'test_bao_as.py' -v
-python3 -m unittest discover -s agent-secrets/policies -p 'test_policies.py' -v
-python3 -m unittest discover -s org-rule-guard/hooks -p 'test_org_rule_guard.py' -v
-python3 -m unittest discover -s scripts -p 'test_check_structure.py' -v
-python3 -m unittest discover -s scripts -p 'test_check_versions.py' -v
-python3 -m unittest discover -s scripts -p 'test_hook_composition.py' -v
-python3 -m unittest discover -s scripts -p 'test_install_bundles.py' -v
+python3 -m unittest discover -s agent-secrets/hooks -v
+python3 -m unittest discover -s agent-secrets/bin -v
+python3 -m unittest discover -s agent-secrets/policies -v
+python3 -m unittest discover -s org-rule-guard/hooks -v
+python3 -m unittest discover -s scripts -v
 ```
 
 Check the shell entry points and enforce the ShellCheck version floor with:
