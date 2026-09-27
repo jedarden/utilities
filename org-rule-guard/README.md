@@ -7,21 +7,76 @@ so nothing could say which rule agents keep hitting, in which repo, how often,
 and the prose in `CLAUDE.md` could not be tuned against evidence.
 
 Same six rules, same deny messages, same fail-open contract as the live hook.
-One addition: every deny appends one JSON line to a log.
+One addition: every deny appends one JSON line to a log. The Python hook is the
+authoritative rule configuration; each rule below links to its rule slug and
+check in [`hooks/org-rule-guard.py`](hooks/org-rule-guard.py).
 
 | Rule | Slug(s) | Scope | What it stops |
 |---|---|---|---|
-| 1 | `github-actions-workflow` | any write to `.github/workflows/*` | GitHub Actions, disabled org-wide; CI runs on Argo Workflows in `iad-ci` |
-| 2 | `k8s-job-cronjob` | `.yaml`/`.yml` only | `kind: Job` and `kind: CronJob`, which ArgoCD cannot prune |
-| 3 | `latest-image-tag` | `.yaml`/`.yml` only | `image: …:latest`, which breaks rollback |
-| 4 | `mutating-kubectl` | Bash | `kubectl apply/delete/patch/scale/…`; read-only verbs, `exec`, `cp`, `logs` and Argo Workflow submission stay allowed |
-| 5 | `credential-value` | **every** file type, and Bash | a credential *value*; secrets travel by reference |
-| 6 | `git-add-all`, `git-commit-all`, `git-commit-no-pathspec` | Bash | blanket `git add -A`/`.`/`--all`, `git commit -a`, and bare `git commit -m`, which sweep in a sibling worker's staged files |
+| [1](hooks/org-rule-guard.py#L434) | [`github-actions-workflow`](hooks/org-rule-guard.py#L57) | any write to `.github/workflows/*` | GitHub Actions, disabled org-wide; CI runs on Argo Workflows in `iad-ci` |
+| [2](hooks/org-rule-guard.py#L444) | [`k8s-job-cronjob`](hooks/org-rule-guard.py#L58) | `.yaml`/`.yml` only | `kind: Job` and `kind: CronJob`, which ArgoCD cannot prune |
+| [3](hooks/org-rule-guard.py#L453) | [`latest-image-tag`](hooks/org-rule-guard.py#L59) | `.yaml`/`.yml` only | `image: …:latest`, which breaks rollback |
+| [4](hooks/org-rule-guard.py#L325) | [`mutating-kubectl`](hooks/org-rule-guard.py#L60) | Bash | `kubectl apply/delete/patch/scale/…`; read-only verbs, `exec`, `cp`, `logs` and Argo Workflow submission stay allowed |
+| [5](hooks/org-rule-guard.py#L405) | [`credential-value`](hooks/org-rule-guard.py#L61) | **every** file type, and Bash | a credential *value*; secrets travel by reference |
+| [6](hooks/org-rule-guard.py#L221) | [`git-add-all`](hooks/org-rule-guard.py#L62), [`git-commit-all`](hooks/org-rule-guard.py#L63), [`git-commit-no-pathspec`](hooks/org-rule-guard.py#L64) | Bash | blanket `git add -A`/`.`/`--all`, `git commit -a`, and bare `git commit -m`, which sweep in a sibling worker's staged files |
 
 Rule 6 has three slugs because blanket staging and the two commit failure
 modes have different fixes.
 Rules 2–3 match real manifest lines only, never comments, so a document that
 *describes* the prohibition is not itself blocked — this README passes.
+
+## PreToolUse behavior
+
+Claude Code invokes the hook for `Write`, `Edit`, and `Bash` through the
+`PreToolUse` matcher shown in the [settings example](examples/settings.json).
+The hook reads one JSON payload from stdin and handles one tool call per
+process. The first matching rule denies the call and writes one JSON object to
+stdout with this shape:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "why this call is prohibited"
+  }
+}
+```
+
+Allowed calls are silent and exit 0. Malformed input, an unparseable shell
+segment, or an internal error exits 0 without output; the hook fails open for
+unexpected conditions. A denial-log write failure does not change a matching
+deny: the hook still emits the deny JSON and exits 0. The implementation of
+this protocol is [`deny()`](hooks/org-rule-guard.py#L77) and
+[`main()`](hooks/org-rule-guard.py#L462).
+
+## Settings wiring
+
+Merge this entry into the operator's `~/.claude/settings.json`; keep any
+unrelated settings already present. The complete checked-in example is
+[`examples/settings.json`](examples/settings.json):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/org-rule-guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`install.sh --wire` installs the hook and merges this same entry. A bare
+`install.sh` prints it without changing settings.
 
 ## Install
 
@@ -54,7 +109,9 @@ ${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl
 
 One line per deny, appended with a single `O_APPEND` write so concurrent
 workers on a shared box do not interleave. The directory is mode 700 and the
-file 600.
+file 600. Each JSONL record contains exactly the six fields below; records are
+independent, so a malformed or partial line must not be treated as a schema
+change.
 
 ```json
 {"ts": "2026-09-05T12:41:07Z", "rule_id": "mutating-kubectl",
