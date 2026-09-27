@@ -7,8 +7,10 @@ test can control the top-level utility layout independently.
     python3 -m unittest discover -s scripts -v
 """
 
+import importlib.util
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -20,6 +22,100 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CHECKER = Path(os.environ.get("CHECK_STRUCTURE_UNDER_TEST", HERE / "check-structure.py"))
+STRUCTURE_DOC = HERE.parent / "docs" / "structure-check.md"
+
+
+def load_checker():
+    spec = importlib.util.spec_from_file_location("check_structure_under_test", CHECKER)
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    return checker
+
+
+checker = load_checker()
+
+
+def documented_inventory_rows(section_heading):
+    """Read tab-separated code-valued rows from one inventory code block."""
+
+    lines = STRUCTURE_DOC.read_text(encoding="utf-8").splitlines()
+    try:
+        section = lines.index(section_heading)
+    except ValueError as error:
+        raise AssertionError(
+            f"structure-check reference is missing section {section_heading!r}"
+        ) from error
+
+    try:
+        start = lines.index("```text", section + 1) + 1
+        end = lines.index("```", start)
+    except ValueError as error:
+        raise AssertionError(
+            f"structure-check reference is missing inventory for {section_heading!r}"
+        ) from error
+
+    rows = []
+    for line in lines[start:end]:
+        if not line.strip():
+            continue
+        fields = line.split("\t", 1)
+        if len(fields) != 2:
+            raise AssertionError(f"malformed inventory row: {line!r}")
+        rows.append(tuple(field.strip() for field in fields))
+    return rows
+
+
+class DocumentationSync(unittest.TestCase):
+    """Keep the reference inventory tied to executable checker rules."""
+
+    def test_documented_package_patterns_match_checker(self):
+        expected = [
+            (label, pattern.pattern)
+            for label, pattern in checker.PACKAGE_INSTALL_PATTERNS
+        ]
+        self.assertEqual(
+            documented_inventory_rows("## Package-manager command inventory"),
+            expected,
+        )
+
+    def test_documented_stdlib_sources_match_checker(self):
+        lines = STRUCTURE_DOC.read_text(encoding="utf-8").splitlines()
+        header = "| Allowlist source | Effective entries |"
+        try:
+            start = lines.index(header) + 1
+        except ValueError as error:
+            raise AssertionError(
+                "structure-check reference is missing the stdlib source table"
+            ) from error
+
+        documented = []
+        for line in lines[start:]:
+            if not line.startswith("|"):
+                break
+            match = re.fullmatch(r"\|\s*`([^`]+)`\s*\|.*", line)
+            if match:
+                documented.append(match.group(1))
+        expected = [source for source, _modules in checker.STDLIB_ALLOWLIST_SOURCES]
+        self.assertEqual(documented, expected)
+        self.assertEqual(
+            checker.STDLIB_MODULES,
+            set().union(*(modules for _source, modules in checker.STDLIB_ALLOWLIST_SOURCES)),
+        )
+
+    def test_documented_required_files_match_checker(self):
+        lines = STRUCTURE_DOC.read_text(encoding="utf-8").splitlines()
+        row = next(
+            line for line in lines if line.startswith("| Required utility files |")
+        )
+        self.assertEqual(tuple(re.findall(r"`([^`]+)`", row)), checker.REQUIRED_FILES)
+
+    def test_documented_sibling_rules_match_checker(self):
+        expected = list(checker.SIBLING_REFERENCE_RULES)
+        expected.append(checker.SIBLING_NORMALIZED_IMPORT_RULE)
+        self.assertEqual(
+            documented_inventory_rows("## Sibling-reference inventory"),
+            expected,
+        )
 
 
 class StructureCheckerTests(unittest.TestCase):

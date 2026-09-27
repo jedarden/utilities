@@ -68,10 +68,16 @@ PACKAGE_INSTALL_PATTERNS = (
     ("cargo", re.compile(r"\bcargo\s+install\b")),
     ("go", re.compile(r"\bgo\s+install\b")),
 )
-STDLIB_MODULES = (
-    set(getattr(sys, "stdlib_module_names", ()))
-    | set(sys.builtin_module_names)
-    | {"__future__"}
+# Keep these names next to the executable allowlist expression.  The
+# structure-check reference document and its documentation-sync test use the
+# source names below to make changes to this policy reviewable.
+STDLIB_ALLOWLIST_SOURCES = (
+    ("sys.stdlib_module_names", set(getattr(sys, "stdlib_module_names", ()))),
+    ("sys.builtin_module_names", set(sys.builtin_module_names)),
+    ("__future__", {"__future__"}),
+)
+STDLIB_MODULES = set().union(
+    *(modules for _source, modules in STDLIB_ALLOWLIST_SOURCES)
 )
 README_TABLE_HEADER = re.compile(r"^\s*\|\s*Folder\s*\|")
 README_TABLE_SEPARATOR = re.compile(r"^\s*:?-{3,}:?\s*$")
@@ -83,6 +89,26 @@ SHIPPED_SETTINGS_EXAMPLES = {
     "org-rule-guard": PurePosixPath("examples/settings.json"),
 }
 PYTHON_MIN_FEATURE_VERSION = 9
+
+
+SIBLING_REFERENCE_RULES = (
+    (
+        "path component",
+        r"(?<![A-Za-z0-9_.-]){escaped}(?=[/\\])",
+    ),
+    (
+        "Python or shell import",
+        r"^\s*(?:from|import)\s+{escaped}(?:\b|\.)",
+    ),
+    (
+        "JavaScript require/import call",
+        r"\b(?:require|import)\s*\(\s*['\"]{escaped}(?:[/\\]|['\"])",
+    ),
+)
+SIBLING_NORMALIZED_IMPORT_RULE = (
+    "hyphen-normalized Python import",
+    r"^\s*(?:from|import)\s+{escaped}(?:\b|\.)",
+)
 
 
 def is_utility_directory(path: Path) -> bool:
@@ -312,19 +338,13 @@ def python_dependency_errors(utility: Path) -> list[str]:
 def dependency_patterns(other: str) -> tuple[re.Pattern[str], ...]:
     escaped = re.escape(other)
     patterns = [
-        # Any path component named after a sibling utility, such as
-        # ../other/bin/tool or /checkout/other/hooks/hook.py.
-        re.compile(rf"(?<![A-Za-z0-9_.-]){escaped}(?=[/\\])"),
-        # Shell/Python/JS-style imports of a sibling package.  Hyphenated
-        # utility names are also checked in their Python-normalized form.
-        re.compile(rf"^\s*(?:from|import)\s+{escaped}(?:\b|\.)"),
-        re.compile(rf"\b(?:require|import)\s*\(\s*['\"]{escaped}(?:[/\\]|['\"])")
+        re.compile(template.replace("{escaped}", escaped))
+        for _label, template in SIBLING_REFERENCE_RULES
     ]
     normalized = other.replace("-", "_")
     if normalized != other and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", normalized):
-        patterns.append(
-            re.compile(rf"^\s*(?:from|import)\s+{re.escape(normalized)}(?:\b|\.)")
-        )
+        _label, template = SIBLING_NORMALIZED_IMPORT_RULE
+        patterns.append(re.compile(template.replace("{escaped}", re.escape(normalized))))
     return tuple(patterns)
 
 

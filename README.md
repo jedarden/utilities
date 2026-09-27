@@ -161,6 +161,10 @@ byte-for-byte unchanged. It never appends a hook entry to such a file.
   runs the combined gate on every push); the
   `check-shellcheck.sh` wrapper verifies ShellCheck's minimum version before
   invoking the repository's shell checks
+- [`docs/structure-check.md`](docs/structure-check.md) — reference inventory
+  for the structure gate's package-manager patterns, Python stdlib allowlist,
+  sibling-reference rules, diagnostics, and update process; its inventories
+  are checked against `check-structure.py` by the structure test suite
 - `docs/notes/` — features, constraints, design decisions
 - `docs/examples/` — shipped wiring examples, including the combined
   [`settings-both.json`](docs/examples/settings-both.json) configuration for

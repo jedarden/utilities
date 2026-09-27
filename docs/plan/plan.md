@@ -48,7 +48,9 @@ tool; nothing shared between folders except the license and this plan.
   POSIX shell shebangs, package-manager install commands, non-stdlib Python
   imports, and undeclared runtime references into a sibling utility are
   rejected. The README Folder table must match the top-level utility folders
-  in both directions.
+  in both directions. The executable inventories and maintenance process for
+  this gate live in [`docs/structure-check.md`](../structure-check.md), with
+  documentation-drift tests in `scripts/test_check_structure.py`.
 
 ## Components
 
