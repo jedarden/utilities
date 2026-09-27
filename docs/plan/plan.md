@@ -10,7 +10,9 @@ tool; nothing shared between folders except the license and this plan.
 - Every utility is a leaf: `README.md`, `VERSION`, `install.sh`, and its files.
   No shared library directory — a shared `lib/` is how an "install one thing"
   repo turns into "install everything" (see jeds-curated-skills, whose
-  installer had to inline `lib/common.sh` for exactly this reason).
+  installer had to inline `lib/common.sh` for exactly this reason). Optional
+  companions may be composed by the host's settings, but a utility must not
+  import or execute a sibling at runtime.
 - Scripts are POSIX shell or Python 3 stdlib. No package installs.
 - Each `install.sh` is idempotent and copies into the conventional user
   locations (`~/.claude/hooks/`, `~/.local/bin/`); it never edits a file it
@@ -89,6 +91,9 @@ tool; nothing shared between folders except the license and this plan.
   fragment) to `${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl`.
   The credential rule logs its pattern name, never a value, and every other
   fragment is scrubbed through the same patterns before it is written.
+  Its credential rule is bundled so this utility remains standalone;
+  `agent-secrets/hooks/credential-guard.py` is an optional companion with a
+  broader pattern set, not a runtime dependency.
 - `hooks/test_org_rule_guard.py` — unittest suite; fixtures are built at
   runtime so no rule-triggering literal sits in the test file.
   `ORG_RULE_GUARD_UNDER_TEST` points the whole suite at any hook copy, so one
@@ -131,13 +136,15 @@ JSONL, one record per deny, never read back by the hook that writes it.
   so the fleet finally has a record of which rules agents keep hitting and
   where the prose is failing; (b) the rules move out of Python into a YAML
   file with per-rule id, pattern, tool scope and message, so a promoted lesson
-  can land as data rather than a code edit, and the credential rule delegates
-  to `agent-secrets/credential-guard.py` instead of duplicating it. Same
-  fail-open contract, same tests passing before and after.
+  can land as data rather than a code edit, without creating a runtime
+  dependency on `agent-secrets`. The bundled credential rule remains the
+  standalone fallback; the broader `agent-secrets` credential hook is an
+  optional settings-level companion. Same fail-open contract, same tests
+  passing before and after.
   - [x] Phase 3(a): denial log — shipped 2026-09-05 as `org-rule-guard/`
     v0.1.0 (45 tests, green against both the ported copy and the live hook)
-  - [ ] Phase 3(b): YAML rules + credential-rule delegation to
-    `agent-secrets/credential-guard.py`
+  - [ ] Phase 3(b): YAML rules while preserving the standalone credential
+    fallback and documenting optional companion composition
 - [ ] Phase 4: further utilities as they are extracted from working setups
 
 ## Open Questions

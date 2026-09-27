@@ -82,6 +82,24 @@ Pair it with a server-side secret scan on your git host (Forgejo/Gitea
 between an agent's slip and the public internet is the point; either alone
 is one bug away from nothing.
 
+## Composing with org-rule-guard
+
+This utility is an optional companion to `org-rule-guard`, not a dependency of
+it. The org guard keeps a bundled credential rule so it remains self-contained;
+this hook adds a broader pattern set and optional extra patterns when both are
+installed. Wire both independent entries with the checked-in
+[`../docs/examples/settings-both.json`](../docs/examples/settings-both.json)
+example, or run both installers' `--wire` modes against the same settings file.
+
+Claude Code runs matching `PreToolUse` handlers in parallel, and a deny wins
+over an allow. Therefore the JSON entry order does not establish precedence.
+If both guards recognize one credential, the tool call is blocked once even
+though both handlers may return a deny; the org guard records its one denial
+and this hook does not create a second denial-log record. If this hook is not
+installed, the org guard's bundled credential check still runs. If the org
+guard is not installed, this hook still protects credentials but cannot enforce
+the org-specific rules.
+
 ## bao-as
 
 `bao-as` requires an instance table and two AppRole credential files for the

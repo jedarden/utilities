@@ -11,6 +11,20 @@ One addition: every deny appends one JSON line to a log. The Python hook is the
 authoritative rule configuration; each rule below links to its rule slug and
 check in [`hooks/org-rule-guard.py`](hooks/org-rule-guard.py).
 
+## Relationship with agent-secrets
+
+`org-rule-guard` is self-contained. Its `credential-value` rule is bundled and
+continues to run when this folder is installed by itself; it does not import,
+execute, or require `agent-secrets`. This is deliberate: installing one
+utility must not silently install or locate another utility at runtime.
+
+`agent-secrets`'s `credential-guard.py` is an optional companion, not a
+required dependency. It has a broader built-in pattern set and supports extra
+patterns, so installing both gives defense in depth and the union of their
+credential coverage. Installing only `org-rule-guard` still enforces its
+credential rule. Installing only `agent-secrets` provides credential coverage
+but not the org-specific Kubernetes, GitHub Actions, or Git protections.
+
 | Rule | Slug(s) | Scope | What it stops |
 |---|---|---|---|
 | [1](hooks/org-rule-guard.py#L434) | [`github-actions-workflow`](hooks/org-rule-guard.py#L57) | any write to `.github/workflows/*` | GitHub Actions, disabled org-wide; CI runs on Argo Workflows in `iad-ci` |
@@ -52,9 +66,14 @@ this protocol is [`deny()`](hooks/org-rule-guard.py#L77) and
 
 ## Settings wiring
 
-Merge this entry into the operator's `~/.claude/settings.json`; keep any
-unrelated settings already present. The complete checked-in example is
-[`examples/settings.json`](examples/settings.json):
+Merge the standalone entry below into the operator's `~/.claude/settings.json`;
+keep any unrelated settings already present. The complete checked-in example
+is [`examples/settings.json`](examples/settings.json). To install the optional
+companion too, use the combined example at
+[`../docs/examples/settings-both.json`](../docs/examples/settings-both.json),
+or run both utilities' `install.sh --wire` commands against the same settings
+file. Each installer appends only its own entry and preserves unrelated
+settings.
 
 ```json
 {
@@ -77,6 +96,32 @@ unrelated settings already present. The complete checked-in example is
 
 `install.sh --wire` installs the hook and merges this same entry. A bare
 `install.sh` prints it without changing settings.
+
+### Composed execution
+
+The combined configuration has two independent `PreToolUse` entries: the org
+guard matches `Write|Edit|Bash`, and the optional credential guard matches
+`Write|Edit|MultiEdit|Bash`. Claude Code runs all matching hook handlers in
+parallel, so the order of entries in `settings.json` is for readability only,
+not an execution-order guarantee. Both handlers receive the same payload.
+Their decisions are combined with `deny` taking precedence, so an allow from
+one hook cannot override a deny from the other. See the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks#hook-handler-fields)
+for the host semantics.
+
+There is no runtime fallback lookup: if the optional companion is not
+installed, leave its settings entry out and `org-rule-guard` continues to
+provide its bundled credential rule. A stale settings entry pointing at a
+missing command provides no credential coverage and should be removed; it does
+not change the org guard's behavior.
+
+If both hooks recognize the same credential, both processes may emit a deny,
+but Claude Code blocks the tool call once. This is an expected duplicate at
+the hook layer, not two tool executions or two permission prompts. Only
+`org-rule-guard` writes the JSONL denial record, so one overlapping call still
+produces one `credential-value` record from this utility. Do not wrap one hook
+inside the other or make either hook convert the other hook's deny into an
+allow.
 
 ## Install
 
@@ -207,10 +252,17 @@ The 15 log tests are skipped against the live hook because it predates the log
 points `XDG_STATE_HOME` at a throwaway directory, so running the suite never
 appends synthetic denials to a real log.
 
-## Not in here yet
+The cross-utility composition test runs from the repository root and invokes
+both hook files against the same payloads, including both hook orders:
 
-The rules are still Python. The next phase moves them into a YAML file with
-per-rule id, pattern, tool scope and message, so a promoted lesson can land as
-data rather than a code edit, and the credential rule delegates to
-`agent-secrets/credential-guard.py` instead of duplicating its pattern table —
-see `docs/plan/plan.md`, Phase 3(b).
+```bash
+python3 -m unittest discover -s scripts -p 'test_hook_composition.py' -v
+```
+
+## Configuration boundary
+
+The rules remain Python and this utility intentionally owns its credential
+fallback. A future shared rule-data format may reduce pattern duplication, but
+it must preserve the no-runtime-sibling-dependency contract. Until then,
+`agent-secrets` is an optional companion selected at settings level rather than
+a delegated implementation dependency.
