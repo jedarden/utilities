@@ -22,6 +22,10 @@ tool; nothing shared between folders except the license and this plan.
   whose VERSION agrees. Releasing means committing the bump and pushing
   commit and tag together — `git push origin main <utility>/v<X.Y.Z>` —
   since pushing the commit alone fails CI until the tag lands.
+- The leaf contract is enforced by `scripts/check-structure.py`, which is
+  invoked by that same CI gate before the version/tag check. Every top-level
+  utility must own `README.md`, `VERSION`, and `install.sh`; symlinks and
+  runtime references into a sibling utility are rejected.
 
 ## Components
 
@@ -116,8 +120,8 @@ JSONL, one record per deny, never read back by the hook that writes it.
   push sensor; runs the unittest suites and shellcheck on every push to
   main, including the org-rule-guard installer contract). Grew the
   policy-template HCL validation suite on 2026-09-16. Since 2026-09-16
-  it also runs `scripts/check-versions.sh` to enforce the VERSION↔tag
-  contract (see Architecture).
+  it also runs `scripts/check-versions.sh` to enforce the VERSION↔tag and
+  self-contained leaf contracts (see Architecture).
 - [ ] Phase 3: `org-rule-guard` — extract the working PreToolUse hook from
   `~/.claude/hooks/org-rule-guard.py` (332 lines, six hard-coded rules, one
   stdout deny path, no log). Two changes, in this order: (a) every denial

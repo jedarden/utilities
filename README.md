@@ -23,9 +23,11 @@ git clone https://git.ardenone.com/jedarden/utilities.git ~/utilities
 ## Structure
 
 - `<utility>/` — one folder per tool, each self-contained
-- `scripts/` — repo tooling, not a utility: `check-versions.sh` verifies each
-  `<utility>/VERSION` has a matching `<utility>/vX.Y.Z` tag (CI runs it on
-  every push)
+- `scripts/` — repo tooling, not a utility: `check-structure.py` verifies each
+  utility owns its `README.md`, `VERSION`, and `install.sh` and has no
+  cross-utility runtime dependency; `check-versions.sh` runs that check and
+  verifies each `<utility>/VERSION` has a matching `<utility>/vX.Y.Z` tag (CI
+  runs the combined gate on every push)
 - `docs/notes/` — features, constraints, design decisions
 - `docs/research/` — external reference material and prior art
 - `docs/plan/plan.md` — complete plan for the repo

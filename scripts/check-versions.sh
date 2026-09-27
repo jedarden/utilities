@@ -30,6 +30,11 @@ die() { printf 'check-versions: %s\n' "$*" >&2; exit 1; }
 top=$(git rev-parse --show-toplevel 2>/dev/null) || die "not a git repository"
 cd "$top"
 
+# This script is the existing utilities-ci entry point for repository-level
+# checks. Keep the structural contract on that same gate so a new utility
+# cannot bypass it by omitting an otherwise unrelated version change.
+python3 "$top/scripts/check-structure.py"
+
 errors=0
 fail() { printf 'check-versions: %s\n' "$*" >&2; errors=$((errors + 1)); }
 
