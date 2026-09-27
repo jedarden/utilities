@@ -822,10 +822,11 @@ time.sleep(60)
 
         result = self.run_install_raw("--wire")
 
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.returncode, 2, result.stderr.decode())
         with open(self.settings) as fh:
             self.assertEqual(json.load(fh), custom)
         self.assertIn("customized", result.stderr.decode())
+        self.assertIn("(exit 2)", result.stderr.decode())
         self.assertFalse(os.path.exists(self.settings + ".bak"))
 
     def test_wire_force_refreshes_a_user_modified_entry(self):

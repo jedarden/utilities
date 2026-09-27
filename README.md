@@ -54,9 +54,15 @@ top-level setting, `hooks` event, and unrelated hook entry. It identifies its
 own `PreToolUse` entry by the exact command: a current matcher/timeout is left
 alone, while a known legacy shipped entry is refreshed in place. A same-command
 entry with any other matcher or timeout is treated as customized, left
-untouched, and reported; use `--wire --force` when that customization should
-be replaced deliberately. If no matching command exists, the installer
-appends its entry. Before the first run that changes an existing settings file,
+untouched, and reported; the report is one `preserved` line on stderr and the
+installer exits 2. The settings file is not rewritten and no backup is created
+for that conflict. Use `--wire --force` when that customization should be
+replaced deliberately: it exits 0 and changes only the matching entry's
+matcher/timeout fields, preserving its command, handler type, other fields, and
+all unrelated settings. If no matching command exists, the installer appends
+its entry. Each utility README lists its exact known-legacy inventory; no other
+same-command shape is eligible for in-place refresh. Before the first run that
+changes an existing settings file,
 the installer creates `$SETTINGS.bak` if it does not already exist. That backup
 is the pre-wiring file: the second installer and later `--wire` runs leave it
 untouched. If the

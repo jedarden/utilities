@@ -409,16 +409,18 @@ try:
             if isinstance(handler, dict) and handler.get("command") == cmd:
                 matching.append((entry, handler))
 
-    current = next(
-        ((entry, handler) for entry, handler in matching
-         if entry.get("matcher") == matcher and "timeout" not in handler),
-        None,
-    )
-    if current is not None:
-        print(f"already    {requested_path}")
-    elif matching and not force:
+    current = [
+        (entry, handler) for entry, handler in matching
+        if entry.get("matcher") == matcher and "timeout" not in handler
+    ]
+    customized = [pair for pair in matching if pair not in current]
+    if customized and not force:
         print(f"preserved  {requested_path}: existing {cmd} wiring is customized; "
-              "use --wire --force to replace its matcher/timeout", file=sys.stderr)
+              "use --wire --force to replace its matcher/timeout (exit 2)",
+              file=sys.stderr)
+        raise SystemExit(2)
+    if current and not customized:
+        print(f"already    {requested_path}")
     else:
         snapshot_backup()
         if matching:

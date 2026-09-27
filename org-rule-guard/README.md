@@ -108,13 +108,27 @@ settings.
 bundle, and merges this same entry. A bare `install.sh` prints it without
 changing settings; it still stages the bundle when it installs.
 
-The entry is identified by its exact command. A current entry uses the
-`Write|Edit|MultiEdit|Bash` matcher and timeout `10`, so re-running `--wire`
-is a no-op. The pre-MultiEdit shipped entry (`Write|Edit|Bash`, timeout `10`)
-is recognized and refreshed in place during an upgrade. Any other same-command
-matcher or timeout is treated as an operator customization, preserved, and
-reported; use `--wire --force` as the explicit escape hatch to replace those
-wiring fields. If the command is absent, `--wire` appends the entry.
+The entry is identified by its exact command. The current shipped entry uses
+the `Write|Edit|MultiEdit|Bash` matcher and timeout `10`, so re-running
+`--wire` is a no-op. The complete known-legacy inventory contains exactly one
+entry: an entry whose object has only `matcher` and `hooks`, whose matcher is
+`Write|Edit|Bash`, and whose matching handler has only `type`, `command`, and
+`timeout`, with timeout `10`. Its `command` must still equal this installer's
+exact command. That pre-`MultiEdit` shipped entry is refreshed in place during
+an upgrade; no other shape is a known legacy entry.
+
+If a same-command entry has any other matcher or timeout, `--wire` preserves
+the settings file byte-for-byte, writes exactly one `preserved` report to
+stderr, and exits 2. The report has this form:
+`preserved  <settings-path>: existing <exact-command> wiring is customized;
+use --wire --force to replace its matcher/timeout (exit 2)`. The installer's
+stdout may still contain the ordinary hook/provenance installation messages;
+the customization report is never sent to stdout. Exit 2 is therefore a
+customization conflict, not a successful warning. `--wire --force` exits 0 and
+replaces the matcher and timeout fields on every matching exact-command entry
+with this release's fields (matcher `Write|Edit|MultiEdit|Bash`, timeout `10`),
+while preserving each command, handler type, other fields, and unrelated
+settings. If the command is absent, the entry is appended.
 
 The settings merge is protected by an exclusive advisory lock at
 `$CLAUDE_SETTINGS.lock` (or `~/.claude/settings.json.lock`), which is kept so

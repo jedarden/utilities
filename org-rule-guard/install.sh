@@ -429,32 +429,42 @@ try:
             if isinstance(handler, dict) and handler.get("command") == cmd:
                 matching.append((entry, handler))
 
-    current = next(
-        ((entry, handler) for entry, handler in matching
-         if entry.get("matcher") == matcher and handler.get("timeout") == 10),
-        None,
-    )
-    legacy = next(
-        ((entry, handler) for entry, handler in matching
-         if entry.get("matcher") == legacy_matcher
-         and handler.get("timeout") == 10
-         and set(entry) == {"matcher", "hooks"}
-         and set(handler) == {"type", "command", "timeout"}),
-        None,
-    )
-    if current is not None:
+    current = [
+        (entry, handler) for entry, handler in matching
+        if entry.get("matcher") == matcher and handler.get("timeout") == 10
+    ]
+    legacy = [
+        (entry, handler) for entry, handler in matching
+        if entry.get("matcher") == legacy_matcher
+        and handler.get("timeout") == 10
+        and set(entry) == {"matcher", "hooks"}
+        and set(handler) == {"type", "command", "timeout"}
+    ]
+    recognized = current + legacy
+    customized = [pair for pair in matching if pair not in recognized]
+    if customized and not force:
+        print(f"preserved  {requested_path}: existing {cmd} wiring is customized; "
+              "use --wire --force to replace its matcher/timeout (exit 2)",
+              file=sys.stderr)
+        raise SystemExit(2)
+    if current and not customized and not legacy:
         print(f"already    {requested_path}")
-    elif legacy is not None or (matching and force):
+    elif legacy and not force:
         snapshot_backup()
-        targets = [legacy] if legacy is not None else matching
-        for entry, handler in targets:
+        for entry, handler in legacy:
+            entry["matcher"] = matcher
+            handler["timeout"] = 10
+        print(f"refreshed  {requested_path}")
+        write_settings(s, source_mode)
+    elif matching and force:
+        snapshot_backup()
+        for entry, handler in matching:
             entry["matcher"] = matcher
             handler["timeout"] = 10
         print(f"refreshed  {requested_path}")
         write_settings(s, source_mode)
     elif matching:
-        print(f"preserved  {requested_path}: existing {cmd} wiring is customized; "
-              "use --wire --force to replace its matcher/timeout", file=sys.stderr)
+        raise AssertionError("unclassified matching hook entry")
     else:
         snapshot_backup()
         pre.append({"matcher": matcher,

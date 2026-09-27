@@ -40,11 +40,24 @@ anything, and it never replaces a hook or `bao-as` copy already at a
 destination without `--force`. `--wire` is the upgrade mode: it replaces the
 installed hook and `bao-as` with the copies from the selected checkout and
 merges or upgrades the hook entry in `settings.json`. The entry is identified
-by its exact command. If its matcher or timeout differs from this release,
-`--wire` preserves and reports a customized entry rather than clobbering it;
-use `--wire --force` as the explicit escape hatch to replace those wiring
-fields. If the command is absent, the entry is appended. Re-running with the
-current matcher (`Write|Edit|MultiEdit|Bash`) and no timeout is a no-op.
+by its exact command. The current shipped entry uses matcher
+`Write|Edit|MultiEdit|Bash` and has no `timeout` field, so re-running `--wire`
+is a no-op. `agent-secrets` has no known legacy shipped entry: the pre-
+`MultiEdit` matcher `Write|Edit|Bash`, with or without a timeout, is not an
+in-place refresh candidate and is treated as customized.
+
+If a same-command entry has any other matcher or timeout, `--wire` preserves
+the settings file byte-for-byte, writes exactly one `preserved` report to
+stderr, and exits 2. The report has this form:
+`preserved  <settings-path>: existing <exact-command> wiring is customized;
+use --wire --force to replace its matcher/timeout (exit 2)`. The installer's
+stdout may still contain the ordinary hook/provenance installation messages;
+the customization report is never sent to stdout. Exit 2 is therefore a
+customization conflict, not a successful warning. `--wire --force` exits 0 and
+replaces the matcher and timeout fields on every matching exact-command entry
+with this release's fields (matcher `Write|Edit|MultiEdit|Bash`, no timeout),
+while preserving each command, handler type, other fields, and unrelated
+settings. If the command is absent, the entry is appended.
 
 The settings merge is protected by an exclusive advisory lock at
 `$CLAUDE_SETTINGS.lock` (or `~/.claude/settings.json.lock`), which is kept so

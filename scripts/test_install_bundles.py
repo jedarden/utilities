@@ -507,6 +507,170 @@ sys.stdin.read()
             self.assertIn("already", result.stdout)
         self.assertEqual(settings.read_bytes(), after_first_wire)
 
+    def test_wire_refreshes_org_rule_guard_legacy_entry_in_place(self):
+        """The one documented org-rule-guard legacy shape is upgraded in place."""
+        checkout = self.stage_checkout()
+        home = self.temp_dir("legacy-wire-home-")
+        runtime = self.temp_dir("legacy-wire-runtime-")
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        command = f"python3 {home / '.claude/hooks/org-rule-guard.py'}"
+        settings.write_text(
+            json.dumps(
+                {
+                    "model": "opus",
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "Read",
+                                "hooks": [{
+                                    "type": "command",
+                                    "command": "printf unrelated",
+                                }],
+                            },
+                            {
+                                "matcher": "Write|Edit|Bash",
+                                "hooks": [{
+                                    "type": "command",
+                                    "command": command,
+                                    "timeout": 10,
+                                }],
+                            },
+                        ],
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_install(
+            checkout, "org-rule-guard", home, runtime,
+            mode="--wire", settings=settings,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("refreshed", result.stdout)
+        self.assertEqual(result.stderr, "")
+        merged = json.loads(settings.read_text(encoding="utf-8"))
+        pretooluse = merged["hooks"]["PreToolUse"]
+        self.assertEqual(len(pretooluse), 2)
+        self.assertEqual(pretooluse[0]["matcher"], "Read")
+        self.assertEqual(pretooluse[1], {
+            "matcher": "Write|Edit|MultiEdit|Bash",
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                "timeout": 10,
+            }],
+        })
+
+    def test_wire_reports_customized_entry_and_exits_two_without_changes(self):
+        """Customized exact-command wiring is reported on stderr as a conflict."""
+        for utility in ("agent-secrets", "org-rule-guard"):
+            with self.subTest(utility=utility):
+                checkout = self.stage_checkout()
+                home = self.temp_dir(f"custom-wire-home-{utility}-")
+                runtime = self.temp_dir(f"custom-wire-runtime-{utility}-")
+                settings = home / ".claude" / "settings.json"
+                settings.parent.mkdir(parents=True)
+                hook_name = (
+                    "credential-guard.py"
+                    if utility == "agent-secrets"
+                    else "org-rule-guard.py"
+                )
+                command = f"python3 {home / '.claude/hooks' / hook_name}"
+                original = {
+                    "model": "opus",
+                    "hooks": {
+                        "PreToolUse": [{
+                            "matcher": "Read",
+                            "hooks": [{
+                                "type": "command",
+                                "command": command,
+                                "timeout": 7,
+                                "operator_note": "keep this",
+                            }],
+                            "operator_note": "keep this too",
+                        }],
+                    },
+                }
+                settings.write_text(
+                    json.dumps(original, indent=2) + "\n", encoding="utf-8"
+                )
+                before = settings.read_bytes()
+
+                result = self.run_install(
+                    checkout, utility, home, runtime,
+                    mode="--wire", settings=settings,
+                )
+
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(settings.read_bytes(), before)
+                self.assertFalse(Path(str(settings) + ".bak").exists())
+                self.assertEqual(result.stderr.count("preserved"), 1)
+                self.assertIn("customized", result.stderr)
+                self.assertIn("(exit 2)", result.stderr)
+                self.assertIn("use --wire --force", result.stderr)
+                self.assertNotIn("customized", result.stdout)
+
+    def test_wire_force_replaces_customized_fields_and_preserves_other_fields(self):
+        """--force changes only matcher/timeout on every exact-command match."""
+        for utility in ("agent-secrets", "org-rule-guard"):
+            with self.subTest(utility=utility):
+                checkout = self.stage_checkout()
+                home = self.temp_dir(f"force-wire-home-{utility}-")
+                runtime = self.temp_dir(f"force-wire-runtime-{utility}-")
+                settings = home / ".claude" / "settings.json"
+                settings.parent.mkdir(parents=True)
+                hook_name = (
+                    "credential-guard.py"
+                    if utility == "agent-secrets"
+                    else "org-rule-guard.py"
+                )
+                command = f"python3 {home / '.claude/hooks' / hook_name}"
+                original = {
+                    "model": "opus",
+                    "hooks": {
+                        "PreToolUse": [{
+                            "matcher": "Read",
+                            "hooks": [{
+                                "type": "command",
+                                "command": command,
+                                "timeout": 7,
+                                "operator_note": "keep this",
+                            }],
+                            "operator_note": "keep this too",
+                        }],
+                    },
+                }
+                settings.write_text(
+                    json.dumps(original, indent=2) + "\n", encoding="utf-8"
+                )
+
+                result = self.run_install(
+                    checkout, utility, home, runtime,
+                    mode="--wire --force", settings=settings,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("refreshed", result.stdout)
+                self.assertEqual(result.stderr, "")
+                merged = json.loads(settings.read_text(encoding="utf-8"))
+                entry = merged["hooks"]["PreToolUse"][0]
+                handler = entry["hooks"][0]
+                self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|Bash")
+                self.assertEqual(handler["command"], command)
+                self.assertEqual(handler["type"], "command")
+                self.assertEqual(handler["operator_note"], "keep this")
+                self.assertEqual(entry["operator_note"], "keep this too")
+                if utility == "agent-secrets":
+                    self.assertNotIn("timeout", handler)
+                else:
+                    self.assertEqual(handler["timeout"], 10)
+                self.assertEqual(merged["model"], "opus")
+
     def test_both_installers_conform_to_one_lock_and_merge_concurrently(self):
         """The independent installers serialize through the same effective lock."""
         checkout = self.stage_checkout()
