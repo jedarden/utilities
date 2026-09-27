@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Structural validation for the policy templates in this directory.
+"""Structural and authorization validation for the policy templates here.
 
 Nothing else in CI can read HCL -- the suites in hooks/ and bin/ test
 Python, shellcheck tests shell, and no OpenBao binary is present in the
@@ -430,6 +430,35 @@ class ShippedTemplates(unittest.TestCase):
             rules[entry.path] = entry.rules["capabilities"]
         return rules
 
+    @staticmethod
+    def path_matches(pattern, request_path):
+        """Match the path subset used by the shipped policies.
+
+        OpenBao treats a trailing `/*` as a prefix glob, while a path without
+        a glob is exact.  Keeping this deliberately small makes the semantic
+        assertions explicit instead of accidentally turning policy paths into
+        regular expressions with different boundary behavior.
+        """
+        if pattern.endswith("/*"):
+            prefix = pattern[:-1]
+            return request_path.startswith(prefix) and request_path != prefix
+        return request_path == pattern
+
+    def capabilities_at(self, rules, request_path):
+        """Return the effective capabilities for one policy request path."""
+        matches = [caps for pattern, caps in rules.items()
+                   if self.path_matches(pattern, request_path)]
+        self.assertLessEqual(
+            len(matches), 1,
+            f"test matcher does not model overlapping rules for {request_path!r}")
+        return set(matches[0]) if matches else set()
+
+    def rendered_rules(self, name, prefix):
+        return {
+            pattern.replace("PREFIX", prefix): caps
+            for pattern, caps in self.rules_of(name).items()
+        }
+
     def test_every_template_matches_its_documented_grant(self):
         for name, expected in self.manifest.items():
             self.assertEqual(self.rules_of(name), expected, name)
@@ -439,6 +468,84 @@ class ShippedTemplates(unittest.TestCase):
         for name in ("agent-prefix.hcl", "writer-prefix.hcl", "reader-prefix.hcl"):
             for path in self.rules_of(name):
                 self.assertRegex(path, r"^secret/(data|metadata)/PREFIX/\*$", name)
+
+    def test_prefix_templates_enforce_path_and_capability_boundaries(self):
+        """Evaluate requests, not just the syntax and source path strings."""
+        prefix = "team-x/app"
+        for name in ("agent-prefix.hcl", "writer-prefix.hcl", "reader-prefix.hcl"):
+            rules = self.rendered_rules(name, prefix)
+            for pattern, expected in self.manifest[name].items():
+                rendered = pattern.replace("PREFIX", prefix)
+                self.assertTrue(rendered.endswith("/*"), rendered)
+                mount_prefix = rendered[:-2]
+                self.assertEqual(
+                    self.capabilities_at(rules, mount_prefix + "/database"),
+                    set(expected),
+                    f"{name}: {mount_prefix}/database",
+                )
+                self.assertEqual(
+                    self.capabilities_at(rules, mount_prefix + "/nested/database"),
+                    set(expected),
+                    f"{name}: {mount_prefix}/nested/database",
+                )
+
+                # A trailing `/*` grants children, not the prefix root itself.
+                self.assertEqual(
+                    self.capabilities_at(rules, mount_prefix),
+                    set(),
+                    f"{name}: {mount_prefix}",
+                )
+
+            # These paths are intentionally close to the owned prefix or are
+            # broader parents.  A substring or unbounded glob implementation
+            # would incorrectly authorize one or more of them.
+            for request_path in (
+                "secret/data/team-x/app-sibling/database",
+                "secret/data/team-x/app2/database",
+                "secret/data/team-x/other/database",
+                "secret/data/team-x",
+                "secret/data",
+                "secret/config/team-x/app/database",
+                "other/data/team-x/app/database",
+            ):
+                self.assertEqual(
+                    self.capabilities_at(rules, request_path),
+                    set(),
+                    f"{name}: {request_path}",
+                )
+
+    def test_carveouts_enforce_exact_and_child_boundaries(self):
+        rules = self.rules_of("superuser-carveouts.hcl")
+
+        for request_path in (
+            "sys/audit",
+            "sys/audit/events",
+            "sys/audit/events/nested",
+            "sys/config/auditing/device",
+        ):
+            self.assertEqual(
+                self.capabilities_at(rules, request_path),
+                {"deny"},
+                request_path,
+            )
+
+        # Exact carveouts do not silently grow into child or neighboring paths;
+        # the audit subtree is protected by its explicit `/*` rule instead.
+        for request_path in (
+            "sys",
+            "sys/audit-log",
+            "sys/config/auditing",
+            "sys/config/auditing-old/device",
+            "sys/seal",
+            "sys/seal/config",
+            "sys/sealed",
+            "sys/step-down",
+            "sys/step-down/now",
+            "sys/step-down-now",
+        ):
+            expected = {"deny"} if request_path in {"sys/seal", "sys/step-down"} else set()
+            self.assertEqual(self.capabilities_at(rules, request_path), expected,
+                             request_path)
 
     def test_privilege_ladder_is_nested(self):
         # README's escalation story, as data: reader <= writer <= agent on
