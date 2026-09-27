@@ -84,20 +84,75 @@ is one bug away from nothing.
 
 ## bao-as
 
+`bao-as` requires an instance table and two AppRole credential files for the
+named instance. With the default settings, the layout is:
+
 ```
-~/.config/bao-as/instances.conf     <name> <address>, one per line
-~/.config/bao-as/<name>/role_id     mode 0600
-~/.config/bao-as/<name>/secret_id   mode 0600
+~/.config/bao-as/                    config directory (created mode 0700)
+~/.config/bao-as/instances.conf     instance table (created mode 0600)
+~/.config/bao-as/<name>/role_id     AppRole role ID (required, mode 0600)
+~/.config/bao-as/<name>/secret_id   AppRole secret ID (required, mode 0600)
 ```
 
-The 0600 modes are enforced, not advisory: `bao-as` refuses to start when
-either file is missing or readable by group/other, before it contacts
-anything.
+`instances.conf` is a whitespace-delimited two-column file. Each nonblank,
+non-comment line has this schema:
+
+```
+<instance-name>  <BAO_ADDR>
+```
+
+The first field is the name passed to `bao-as <instance-name> ...`; the second
+field is the complete OpenBao/Vault endpoint URL for that instance, including
+the port when it is not the endpoint default. Names must not contain
+whitespace. A blank line or a line whose first non-whitespace character is
+`#` is ignored. Keep the table to two fields; fields after the address are not
+configuration.
+
+The requested name selects the matching row, and its address is exported as
+both `BAO_ADDR` and `VAULT_ADDR` for the child command. The wrapper overwrites
+any inherited values, so the table—not the caller's environment—chooses the
+endpoint. Duplicate names are ambiguous; use each name once.
+
+The installer creates the config directory with mode `0700` and the table
+with mode `0600`. Credential files must be owner-only readable (`0600` is the
+intended mode), and the per-instance directory should be `0700`. At runtime,
+`bao-as` refuses to contact the CLI when either credential file is missing or
+readable by group/other; this check happens before login. The table and
+credential paths contain references only—the role and secret values must never
+be put in `instances.conf`.
+
+The config location and login CLI can be overridden without changing the
+table schema:
+
+| Setting | Effect |
+|---|---|
+| `BAO_AS_CONFIG_DIR` | Uses this directory as the config root. `instances.conf` and `<name>/` are read directly beneath it. |
+| `XDG_CONFIG_HOME` | Changes the default parent to `$XDG_CONFIG_HOME/bao-as` when `BAO_AS_CONFIG_DIR` is unset. |
+| `BAO_AS_BIN` | Selects the login executable; defaults to `bao`, and may be set to `vault`. |
+
+There is no separate endpoint setting: the address in the selected table row
+is used for that invocation. `BAO_AS_CONFIG_DIR` is a directory override, not
+an override for the `instances.conf` filename.
+
+Start from the placeholder-only file at
+[`examples/bao-as-instances.conf`](examples/bao-as-instances.conf), replace
+both placeholders, then create the matching credential directory and files:
 
 ```bash
-bao-as prod bao kv metadata get secret/app/db          # verify by property: current_version
-openssl rand -base64 32 | bao-as prod bao kv put -cas=3 secret/app/db password=-
-bao-as prod bao kv get -field=token secret/app/api > ~/.config/app/token   # to a 0600 file, never stdout
+config_root="${BAO_AS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bao-as}"
+instance_name='replace-with-instance-name'
+install -d -m 700 "$config_root/$instance_name"
+chmod 600 "$config_root/$instance_name/role_id" \
+  "$config_root/$instance_name/secret_id"
+```
+
+The installer seeds `instances.conf` once and never rewrites it, so adding or
+changing an instance is an operator action.
+
+```bash
+bao-as "$instance_name" bao kv metadata get secret/app/db          # verify by property: current_version
+openssl rand -base64 32 | bao-as "$instance_name" bao kv put -cas=3 secret/app/db password=-
+bao-as "$instance_name" bao kv get -field=token secret/app/api > ~/.config/app/token   # to a 0600 file, never stdout
 ```
 
 Why a wrapper at all: the `bao` CLI's token helper writes `~/.vault-token`,
