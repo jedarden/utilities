@@ -67,6 +67,11 @@ git push origin main <utility>/vX.Y.Z
 Pushing only the VERSION change intentionally leaves the repository failing
 the release gate. This makes the source version, user-facing change summary,
 and published identity unambiguous for each independently installable utility.
+For an `agent-secrets` release, the same push must also update
+`org-rule-guard/bundled-dependencies.json` so its pinned `agent-secrets`
+version equals the new `agent-secrets/VERSION`. If that pin cannot be included
+in the same push, immediately follow with a dependent `org-rule-guard` release
+that updates it; the combined gate stays red while the pin is stale.
 
 ## Small, dependency-light repository tooling
 

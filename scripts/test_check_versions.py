@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 CHECKER = Path(os.environ.get("CHECK_VERSIONS_UNDER_TEST", HERE / "check-versions.sh"))
 STRUCTURE_CHECKER = HERE / "check-structure.py"
 
@@ -197,6 +198,33 @@ class VersionCheckerTests(unittest.TestCase):
             f"pinned version '9.9.9' does not match {beta}/VERSION ('1.0.0')",
             result.stderr,
         )
+
+    def test_release_docs_describe_the_bundle_pin_required_by_the_gate(self):
+        required_phrases = (
+            "org-rule-guard/bundled-dependencies.json",
+            "agent-secrets/VERSION",
+            "same push",
+            "dependent `org-rule-guard` release",
+        )
+        release_sections = (
+            (ROOT / "README.md", "## Releasing"),
+            (
+                ROOT / "docs/notes/design-decisions.md",
+                "## Version files, changelogs, and tags are a release contract",
+            ),
+        )
+        for path, heading in release_sections:
+            with self.subTest(document=path):
+                document = path.read_text(encoding="utf-8")
+                self.assertIn(heading, document)
+                document = document.split(heading, 1)[1].split("\n## ", 1)[0]
+                document = " ".join(document.split())
+                for phrase in required_phrases:
+                    self.assertIn(phrase, document)
+
+        gate = (ROOT / "scripts/check-versions.sh").read_text(encoding="utf-8")
+        self.assertIn("bundled-dependencies.json` pin disagrees", gate)
+        self.assertIn('python3 "$top/scripts/check-structure.py"', gate)
 
     def test_readme_missing_utility_row_fails(self):
         self.write_utility("widget", "1.0.0")

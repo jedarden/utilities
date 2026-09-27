@@ -142,6 +142,12 @@ scripts/check-shellcheck.sh
 To release a utility, add a concise user-facing entry to the top of
 `<utility>/CHANGELOG.md` with the exact heading `## [X.Y.Z] - YYYY-MM-DD`,
 update `<utility>/VERSION` to the same `X.Y.Z`, and commit both files together.
+When releasing `agent-secrets`, also update
+`org-rule-guard/bundled-dependencies.json` so its pinned `agent-secrets`
+version equals the new `agent-secrets/VERSION` in the same push. If the pin
+cannot land in that push, immediately follow it with a dependent
+`org-rule-guard` release that updates the pin; otherwise the combined release
+gate remains red.
 Create a tag in the form `<utility>/vX.Y.Z` at that commit, then push the commit
 and tag together:
 
@@ -150,9 +156,10 @@ git push origin main <utility>/vX.Y.Z
 ```
 
 CI runs `scripts/check-versions.sh`, which first verifies every utility has a
-current-version changelog heading and then checks the bidirectional
+current-version changelog heading, enforces each bundled-dependencies pin
+against its sibling's current `VERSION`, and then checks the bidirectional
 VERSION↔tag contract. A VERSION bump without its matching changelog entry or
-tag therefore fails the release gate.
+tag, or a stale dependent bundle pin, therefore fails the release gate.
 
 ## Bead checkpoint workflow
 
