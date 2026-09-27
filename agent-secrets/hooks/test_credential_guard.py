@@ -282,19 +282,40 @@ class HookProcess(unittest.TestCase):
             "command": "curl -H 'Authorization: Bearer " + token("ghp_") + "' https://api.example"}})
         self.assertTrue(denied(r))
 
-    def test_denial_log_records_only_properties_for_each_payload_shape(self):
+    def test_denial_log_redacts_payload_for_each_supported_tool(self):
+        write_secret = token("ghp_")
+        edit_secret = token("glpat-", 24)
+        multiedit_secret = token("npm_", 36)
+        bash_secret = token("hvs.", 28)
         cases = (
-            ("Write", {"file_path": "/tmp/notes.md", "content": "value: " + token("ghp_")},
-             "Write.content"),
-            ("Edit", {"file_path": "/tmp/notes.md", "new_string": "value: " + token("glpat-", 24)},
-             "Edit.new_string"),
-            ("MultiEdit", {"file_path": "/tmp/notes.md", "edits": [
-                {"new_string": "value: " + token("npm_", 36)}]},
-             "MultiEdit.edits[].new_string"),
-            ("Bash", {"command": "printf '%s' '" + token("hvs.", 28) + "'"},
-             "Bash.command"),
+            ("Write", {
+                "file_path": "/tmp/write-payload-path-marker",
+                "content": "write-payload-before-" + write_secret
+                           + "-write-payload-after",
+            }, "Write.content", write_secret),
+            ("Edit", {
+                "file_path": "/tmp/edit-payload-path-marker",
+                "old_string": "edit-old-payload-marker",
+                "new_string": "edit-payload-before-" + edit_secret
+                              + "-edit-payload-after",
+            }, "Edit.new_string", edit_secret),
+            ("MultiEdit", {
+                "file_path": "/tmp/multiedit-payload-path-marker",
+                "edits": [{
+                    "old_string": "multiedit-old-payload-marker",
+                    "new_string": "multiedit-payload-before-"
+                                  + multiedit_secret
+                                  + "-multiedit-payload-after",
+                }],
+            }, "MultiEdit.edits[].new_string", multiedit_secret),
+            ("Bash", {
+                "command": "printf '%s' 'bash-command-before-"
+                           + bash_secret
+                           + "-bash-command-after'",
+                "description": "bash-command-metadata-marker",
+            }, "Bash.command", bash_secret),
         )
-        for tool, tool_input, shape in cases:
+        for tool, tool_input, shape, secret in cases:
             with self.subTest(tool=tool):
                 state = tempfile.mkdtemp(prefix="credential-guard-log-")
                 _CLEANUP.append(state)
@@ -307,25 +328,27 @@ class HookProcess(unittest.TestCase):
                 self.assertTrue(denied(result))
                 log_path = os.path.join(state, "denials.jsonl")
                 with open(log_path, encoding="utf-8") as fh:
-                    text = fh.read()
-                records = [json.loads(line) for line in text.splitlines()]
+                    serialized = fh.read()
+                records = [json.loads(line) for line in serialized.splitlines()]
                 self.assertEqual(len(records), 1)
                 self.assertEqual(set(records[0]), {
                     "ts", "rule_id", "tool", "cwd", "session_id", "payload_shape",
                 })
-                self.assertEqual(records[0]["rule_id"], "credential-value")
-                self.assertEqual(records[0]["tool"], tool)
-                self.assertEqual(records[0]["payload_shape"], shape)
-                self.assertEqual(records[0]["cwd"], "/tmp/credential-guard-test")
-                self.assertEqual(records[0]["session_id"], "session-property-only")
-                values = [tool_input.get("command"), tool_input.get("content"),
-                          tool_input.get("new_string")]
-                for value in values:
-                    if value:
-                        self.assertNotIn(value, text)
+                record = records[0]
+                self.assertEqual(record["rule_id"], "credential-value")
+                self.assertEqual(record["tool"], tool)
+                self.assertEqual(record["payload_shape"], shape)
+                self.assertEqual(record["cwd"], "/tmp/credential-guard-test")
+                self.assertEqual(record["session_id"], "session-property-only")
+
+                self.assertNotIn(secret, serialized)
+                for key, value in tool_input.items():
+                    if isinstance(value, str):
+                        self.assertNotIn(value, serialized, key)
                 for edit in tool_input.get("edits", []):
-                    if edit.get("new_string"):
-                        self.assertNotIn(edit["new_string"], text)
+                    for value in edit.values():
+                        if isinstance(value, str):
+                            self.assertNotIn(value, serialized)
 
     def test_allow_writes_no_denial_record(self):
         state = tempfile.mkdtemp(prefix="credential-guard-allow-")
