@@ -84,9 +84,13 @@ is one bug away from nothing.
 
 ## Composing with org-rule-guard
 
-This utility is an optional companion to `org-rule-guard`, not a dependency of
-it. The org guard keeps a bundled credential rule so it remains self-contained;
-this hook adds a broader pattern set and optional extra patterns when both are
+This utility is an optional companion to `org-rule-guard`, not a runtime
+dependency of it. The org guard keeps a standalone credential fallback; when
+Phase 3(b) reuses this hook, it may do so only through the checked-in,
+version-pinned install-time bundle declared by `org-rule-guard`'s
+`bundled-dependencies.json`. That installer copies this hook into its own
+installed layout, so no installed code looks up this utility at runtime. This
+hook adds a broader pattern set and optional extra patterns when both are
 installed. Wire both independent entries with the checked-in
 [`../docs/examples/settings-both.json`](../docs/examples/settings-both.json)
 example, or run both installers' `--wire` modes against the same settings file.

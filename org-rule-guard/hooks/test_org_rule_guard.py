@@ -483,6 +483,9 @@ class Install(unittest.TestCase):
     def dst(self):
         return os.path.join(self.hooks_dir, "org-rule-guard.py")
 
+    def bundle_dst(self):
+        return os.path.join(self.hooks_dir, "org-rule-guard", "credential-guard.py")
+
     def read(self, path):
         with open(path) as fh:
             return fh.read()
@@ -490,6 +493,7 @@ class Install(unittest.TestCase):
     def test_first_install_copies_the_hook_and_leaves_settings_alone(self):
         out = self.run_install()
         self.assertTrue(os.path.exists(self.dst()), out)
+        self.assertTrue(os.path.exists(self.bundle_dst()), out)
         self.assertFalse(os.path.exists(self.settings), out)
 
     def test_default_destinations_come_from_home(self):
@@ -508,6 +512,8 @@ class Install(unittest.TestCase):
         out = proc.stdout.decode()
         self.assertTrue(os.path.exists(
             os.path.join(home, ".claude", "hooks", "org-rule-guard.py")), out)
+        self.assertTrue(os.path.exists(
+            os.path.join(home, ".claude", "hooks", "org-rule-guard", "credential-guard.py")), out)
         self.assertFalse(os.path.exists(
             os.path.join(home, ".claude", "settings.json")), out)
 
@@ -524,12 +530,14 @@ class Install(unittest.TestCase):
         self.run_install()
         out = self.run_install("--uninstall")
         self.assertFalse(os.path.exists(self.dst()), out)
+        self.assertFalse(os.path.exists(self.bundle_dst()), out)
         with open(log) as fh:
             self.assertEqual(fh.read(), '{"rule_id": "keep-me"}\n', out)
 
     def test_installed_hook_is_executable(self):
         self.run_install()
         self.assertTrue(os.stat(self.dst()).st_mode & stat.S_IXUSR)
+        self.assertTrue(os.stat(self.bundle_dst()).st_mode & stat.S_IXUSR)
 
     def test_installed_hook_passes_the_rule_fixtures(self):
         """What the installer put down is the thing this file tests. Only the

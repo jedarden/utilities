@@ -1,0 +1,10 @@
+{
+  "bundles": [
+    {
+      "utility": "agent-secrets",
+      "version": "0.1.0",
+      "source": "hooks/credential-guard.py",
+      "destination": "credential-guard.py"
+    }
+  ]
+}

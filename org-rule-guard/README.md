@@ -13,17 +13,23 @@ check in [`hooks/org-rule-guard.py`](hooks/org-rule-guard.py).
 
 ## Relationship with agent-secrets
 
-`org-rule-guard` is self-contained. Its `credential-value` rule is bundled and
-continues to run when this folder is installed by itself; it does not import,
-execute, or require `agent-secrets`. This is deliberate: installing one
-utility must not silently install or locate another utility at runtime.
+`org-rule-guard` is a runtime leaf. Its `credential-value` rule is bundled and
+continues to run when this folder is installed by itself; the installed hook
+does not import, execute, or look up `agent-secrets`. The one sanctioned reuse
+mechanism is the pinned install-time bundle declared in
+[`bundled-dependencies.json`](bundled-dependencies.json): `install.sh` copies
+`agent-secrets` v0.1.0's hook into the installed
+`org-rule-guard/credential-guard.py` sublayout. That source checkout reference
+exists only while installing and is checked by `scripts/check-structure.py`;
+runtime delegation must use the copied file.
 
-`agent-secrets`'s `credential-guard.py` is an optional companion, not a
-required dependency. It has a broader built-in pattern set and supports extra
-patterns, so installing both gives defense in depth and the union of their
-credential coverage. Installing only `org-rule-guard` still enforces its
-credential rule. Installing only `agent-secrets` provides credential coverage
-but not the org-specific Kubernetes, GitHub Actions, or Git protections.
+`agent-secrets`'s `credential-guard.py` is still an optional settings-level
+companion, not a required runtime dependency. It has a broader built-in
+pattern set and supports extra patterns, so wiring both gives defense in depth
+and the union of their credential coverage. Installing only `org-rule-guard`
+still enforces its credential rule. Installing only `agent-secrets` provides
+credential coverage but not the org-specific Kubernetes, GitHub Actions, or
+Git protections.
 
 | Rule | Slug(s) | Scope | What it stops |
 |---|---|---|---|
@@ -94,8 +100,9 @@ settings.
 }
 ```
 
-`install.sh --wire` installs the hook and merges this same entry. A bare
-`install.sh` prints it without changing settings.
+`install.sh --wire` installs the hook, stages the pinned credential-guard
+bundle, and merges this same entry. A bare `install.sh` prints it without
+changing settings; it still stages the bundle when it installs.
 
 ### Composed execution
 
@@ -262,7 +269,8 @@ python3 -m unittest discover -s scripts -p 'test_hook_composition.py' -v
 ## Configuration boundary
 
 The rules remain Python and this utility intentionally owns its credential
-fallback. A future shared rule-data format may reduce pattern duplication, but
-it must preserve the no-runtime-sibling-dependency contract. Until then,
-`agent-secrets` is an optional companion selected at settings level rather than
-a delegated implementation dependency.
+fallback. Phase 3(b) may reduce pattern duplication by consuming the copied
+bundle, but it must preserve the no-runtime-sibling-dependency contract and
+the pinned manifest. Until that phase lands, `agent-secrets` is an optional
+companion selected at settings level rather than a delegated runtime
+implementation dependency.

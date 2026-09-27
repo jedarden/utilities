@@ -10,6 +10,7 @@ other repository checks.
 
 from __future__ import annotations
 
+import json
 import re
 import stat
 import sys
@@ -18,6 +19,7 @@ from pathlib import PurePosixPath
 
 
 REQUIRED_FILES = ("README.md", "VERSION", "install.sh")
+BUNDLE_MANIFEST = "bundled-dependencies.json"
 REPOSITORY_DIRECTORIES = {"docs", "scripts"}
 TEXT_SUFFIXES = {
     ".bash",
@@ -39,6 +41,7 @@ TEXT_SUFFIXES = {
 README_TABLE_HEADER = re.compile(r"^\s*\|\s*Folder\s*\|")
 README_TABLE_SEPARATOR = re.compile(r"^\s*:?-{3,}:?\s*$")
 README_FOLDER_LINK = re.compile(r"^\[([^]]+)\]\(([^)]+)\)$")
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
 
 def is_utility_directory(path: Path) -> bool:
@@ -83,7 +86,7 @@ def runtime_files(utility: Path):
     for path in utility.rglob("*"):
         if not path.is_file() or path.is_symlink():
             continue
-        if path.name in REQUIRED_FILES:
+        if path.name in REQUIRED_FILES or path.name == BUNDLE_MANIFEST:
             continue
         try:
             mode = path.stat().st_mode
@@ -112,6 +115,101 @@ def dependency_patterns(other: str) -> tuple[re.Pattern[str], ...]:
     return tuple(patterns)
 
 
+def _safe_relative_path(value: object) -> bool:
+    """Return whether a manifest path stays inside its declared layout."""
+
+    if not isinstance(value, str) or not value or value.startswith(("/", "\\")):
+        return False
+    if "\\" in value:
+        return False
+    parts = PurePosixPath(value).parts
+    return bool(parts) and all(part not in {".", ".."} for part in parts)
+
+
+def bundled_dependency_declarations(
+    utility: Path, siblings: list[Path]
+) -> tuple[dict[tuple[str, str], str], list[str]]:
+    """Read the only sanctioned install-time sibling dependency declaration.
+
+    A bundle is source material copied by install.sh into the installing
+    utility's own layout.  The installed files therefore remain a leaf at
+    runtime.  The manifest is deliberately strict: one sibling name, the
+    exact VERSION it was copied from, a source path inside that sibling, and a
+    relative destination inside the installed bundle layout.
+    """
+
+    manifest = utility / BUNDLE_MANIFEST
+    if not manifest.exists():
+        return {}, []
+    if manifest.is_symlink() or not manifest.is_file():
+        return {}, [f"{manifest}: bundle manifest must be an owned file"]
+
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return {}, [f"{manifest}: invalid bundle manifest ({error})"]
+
+    if not isinstance(data, dict) or set(data) != {"bundles"}:
+        return {}, [f"{manifest}: expected an object containing only 'bundles'"]
+    bundles = data["bundles"]
+    if not isinstance(bundles, list):
+        return {}, [f"{manifest}: 'bundles' must be a list"]
+
+    sibling_by_name = {sibling.name: sibling for sibling in siblings}
+    declarations = {}
+    errors = []
+    for index, bundle in enumerate(bundles, 1):
+        label = f"{manifest}: bundles[{index}]"
+        if not isinstance(bundle, dict) or set(bundle) != {
+            "utility", "version", "source", "destination"
+        }:
+            errors.append(
+                f"{label}: expected utility, version, source, and destination"
+            )
+            continue
+
+        sibling_name = bundle["utility"]
+        version = bundle["version"]
+        source = bundle["source"]
+        destination = bundle["destination"]
+        sibling = sibling_by_name.get(sibling_name)
+        if sibling is None or sibling_name == utility.name:
+            errors.append(f"{label}: utility {sibling_name!r} is not a sibling")
+            continue
+        if not isinstance(version, str) or not SEMVER.fullmatch(version):
+            errors.append(f"{label}: version {version!r} is not semver")
+            continue
+        if not _safe_relative_path(source):
+            errors.append(f"{label}: source must be a safe relative path")
+            continue
+        if not _safe_relative_path(destination):
+            errors.append(f"{label}: destination must be a safe relative path")
+            continue
+
+        version_file = sibling / "VERSION"
+        try:
+            actual_version = version_file.read_text(encoding="utf-8").splitlines()[0].strip()
+        except (OSError, UnicodeDecodeError, IndexError):
+            actual_version = ""
+        if actual_version != version:
+            errors.append(
+                f"{label}: pinned version {version!r} does not match "
+                f"{sibling}/VERSION ({actual_version!r})"
+            )
+
+        source_path = sibling / PurePosixPath(source)
+        if source_path.is_symlink() or not source_path.is_file():
+            errors.append(f"{label}: source file {source_path} is missing or a symlink")
+
+        key = (sibling_name, source)
+        if key in declarations:
+            errors.append(f"{label}: duplicate bundle source {sibling_name!r}/{source}")
+        else:
+            declarations[key] = destination
+
+    return declarations, errors
+
+
 def dependency_errors(utility: Path, siblings: list[Path]) -> list[str]:
     errors = []
     patterns = {
@@ -134,6 +232,70 @@ def dependency_errors(utility: Path, siblings: list[Path]) -> list[str]:
                         f"{path}:{line_number}: runtime reference to sibling "
                         f"utility {sibling!r}"
                     )
+    return errors
+
+
+def install_time_dependency_errors(
+    utility: Path,
+    siblings: list[Path],
+    declarations: dict[tuple[str, str], str],
+) -> list[str]:
+    """Allow only declared source-copy lines in an install script.
+
+    install.sh is not runtime code, but silently ignoring it would make an
+    accidental sibling dependency invisible.  A declared source (and its
+    sibling VERSION file when the installer checks the pin) must appear in the
+    script, and the source must be used by an install/cp command.  This keeps
+    the exception narrowly scoped to copying pinned material into the
+    utility's own layout.
+    """
+
+    install = utility / "install.sh"
+    try:
+        lines = install.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    patterns = {
+        sibling.name: dependency_patterns(sibling.name)
+        for sibling in siblings
+        if sibling.name != utility.name
+    }
+    copied = set()
+    seen = set()
+    errors = []
+    for line_number, line in enumerate(lines, 1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        normalized = line.replace("\\", "/")
+        for sibling, sibling_patterns in patterns.items():
+            if not any(pattern.search(line) for pattern in sibling_patterns):
+                continue
+            matches = [
+                (sibling_name, source)
+                for sibling_name, source in declarations
+                if sibling_name == sibling
+                and f"../{sibling_name}/{source}" in normalized
+            ]
+            version_reference = f"../{sibling}/VERSION" in normalized
+            if len(matches) == 1 or version_reference:
+                if len(matches) == 1:
+                    seen.add(matches[0])
+                    if re.search(r"\b(?:install|cp)\b", line):
+                        copied.add(matches[0])
+                continue
+            errors.append(
+                f"{install}:{line_number}: install-time reference to sibling "
+                f"utility {sibling!r} is not a declared pinned bundle"
+            )
+
+    for sibling, source in sorted(declarations):
+        if (sibling, source) not in seen or (sibling, source) not in copied:
+            errors.append(
+                f"{install}: declared bundle {sibling!r}/{source} is not "
+                "referenced and copied by an install/cp command"
+            )
     return errors
 
 
@@ -212,6 +374,7 @@ def main() -> int:
         if path.is_dir() and is_utility_directory(path)
     )
     errors = []
+    bundle_declarations = {}
 
     for utility in candidates:
         if utility.is_symlink():
@@ -219,11 +382,23 @@ def main() -> int:
             continue
         errors.extend(required_file_errors(utility))
         errors.extend(symlink_errors(utility))
+        declarations, declaration_errors = bundled_dependency_declarations(
+            utility, candidates
+        )
+        bundle_declarations[utility.name] = declarations
+        errors.extend(declaration_errors)
 
     for utility in candidates:
         if utility.is_symlink():
             continue
         errors.extend(dependency_errors(utility, candidates))
+        errors.extend(
+            install_time_dependency_errors(
+                utility,
+                candidates,
+                bundle_declarations.get(utility.name, {}),
+            )
+        )
 
     errors.extend(readme_table_errors(root, candidates))
 
@@ -236,7 +411,8 @@ def main() -> int:
     print(
         "check-structure: "
         f"{len(candidates)} utilities have README.md, VERSION, install.sh "
-        "and no cross-utility runtime dependencies; README Folder table agrees"
+        "and no undeclared cross-utility runtime dependencies; README Folder "
+        "table agrees"
     )
     return 0
 

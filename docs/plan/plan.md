@@ -7,12 +7,21 @@ tool; nothing shared between folders except the license and this plan.
 
 ## Architecture
 
-- Every utility is a leaf: `README.md`, `VERSION`, `install.sh`, and its files.
-  No shared library directory — a shared `lib/` is how an "install one thing"
-  repo turns into "install everything" (see jeds-curated-skills, whose
-  installer had to inline `lib/common.sh` for exactly this reason). Optional
-  companions may be composed by the host's settings, but a utility must not
-  import or execute a sibling at runtime.
+- Every utility is a runtime leaf: `README.md`, `VERSION`, `install.sh`, and
+  its files. No shared library directory — a shared `lib/` is how an "install
+  one thing" repo turns into "install everything" (see jeds-curated-skills,
+  whose installer had to inline `lib/common.sh` for exactly this reason).
+  Optional companions may be composed by the host's settings, but an installed
+  utility must not import, execute, or look up a sibling at runtime.
+- The one sanctioned reuse path is an install-time bundle. A utility may add
+  `bundled-dependencies.json` with a sibling name, exact sibling `VERSION`,
+  source path, and destination path. Its `install.sh` may read that pinned
+  source and copy it into the utility's own installed layout; the installed
+  copy is then the only runtime input. `scripts/check-structure.py` verifies
+  the manifest, the sibling version, the source file, and the copy reference,
+  while rejecting every undeclared sibling reference. This is the mechanism
+  Phase 3(b) must use if it reuses `agent-secrets`' credential guard; a direct
+  import or subprocess delegation to the checkout is not sanctioned.
 - Scripts are POSIX shell or Python 3 stdlib. No package installs.
 - Each `install.sh` is idempotent and copies into the conventional user
   locations (`~/.claude/hooks/`, `~/.local/bin/`); it never edits a file it
@@ -109,7 +118,14 @@ tool; nothing shared between folders except the license and this plan.
   file this folder did not install and leaving the denial log in place.
 - `install.sh` — idempotent copy into `~/.claude/hooks/`. Never overwrites a
   hook already at the destination and never touches `settings.json` without
-  `--wire`; `--uninstall` refuses a file this folder did not install.
+  `--wire`; `--uninstall` refuses a file this folder did not install. It also
+  copies the pinned `agent-secrets` credential guard into the installed
+  `org-rule-guard/` sublayout; the source reference is install-time only and
+  is declared in `bundled-dependencies.json`.
+- `bundled-dependencies.json` — pins `agent-secrets` v0.1.0's credential guard
+  source to the copy installed under `org-rule-guard/`. The current v0.1.0
+  hook still owns its standalone credential fallback; the bundle is the
+  approved seam for Phase 3(b)'s future rule-engine delegation.
 - `examples/settings.json` — the hook wiring for `~/.claude/settings.json`.
 
 ## Data Models
@@ -139,15 +155,16 @@ JSONL, one record per deny, never read back by the hook that writes it.
   so the fleet finally has a record of which rules agents keep hitting and
   where the prose is failing; (b) the rules move out of Python into a YAML
   file with per-rule id, pattern, tool scope and message, so a promoted lesson
-  can land as data rather than a code edit, without creating a runtime
-  dependency on `agent-secrets`. The bundled credential rule remains the
-  standalone fallback; the broader `agent-secrets` credential hook is an
-  optional settings-level companion. Same fail-open contract, same tests
-  passing before and after.
+  can land as data rather than a code edit. If its credential rule reuses
+  `agent-secrets`, it must consume the pinned install-time bundle described in
+  Architecture; it must never import or execute the sibling checkout. The
+  standalone credential rule remains the fallback until that bundle is used.
+  Same fail-open contract, same tests passing before and after.
   - [x] Phase 3(a): denial log — shipped 2026-09-05 as `org-rule-guard/`
     v0.1.0 (45 tests, green against both the ported copy and the live hook)
-  - [ ] Phase 3(b): YAML rules while preserving the standalone credential
-    fallback and documenting optional companion composition
+  - [ ] Phase 3(b): YAML rules with the credential rule consuming the pinned
+    install-time bundle while preserving the standalone fallback and documenting
+    optional settings-level companion composition
 - [ ] Phase 4: further utilities as they are extracted from working setups
 
 ## Open Questions

@@ -7,6 +7,7 @@ test can control the top-level utility layout independently.
     python3 -m unittest discover -s scripts -v
 """
 
+import json
 import os
 import shutil
 import stat
@@ -154,6 +155,131 @@ class StructureCheckerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             f"{runtime_file}:1: runtime reference to sibling utility 'beta'",
+            result.stderr,
+        )
+
+    def test_declared_pinned_bundle_copy_passes(self):
+        alpha = self.write_utility("alpha")
+        beta = self.write_utility("beta")
+        source = beta / "hooks" / "credential.py"
+        source.parent.mkdir()
+        source.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        (alpha / "bundled-dependencies.json").write_text(
+            json.dumps({
+                "bundles": [{
+                    "utility": "beta",
+                    "version": "1.0.0",
+                    "source": "hooks/credential.py",
+                    "destination": "credential.py",
+                }]
+            }),
+            encoding="utf-8",
+        )
+        install = alpha / "install.sh"
+        install.write_text(
+            "#!/usr/bin/env bash\n"
+            'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
+            encoding="utf-8",
+        )
+        install.chmod(install.stat().st_mode | stat.S_IXUSR)
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_undeclared_install_time_sibling_reference_fails(self):
+        alpha = self.write_utility("alpha")
+        self.write_utility("beta")
+        install = alpha / "install.sh"
+        install.write_text(
+            "#!/usr/bin/env bash\n"
+            'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
+            encoding="utf-8",
+        )
+        install.chmod(install.stat().st_mode | stat.S_IXUSR)
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"{install}:2: install-time reference to sibling utility 'beta' "
+            "is not a declared pinned bundle",
+            result.stderr,
+        )
+
+    def test_pinned_bundle_does_not_allow_runtime_sibling_reference(self):
+        alpha = self.write_utility("alpha")
+        beta = self.write_utility("beta")
+        source = beta / "hooks" / "credential.py"
+        source.parent.mkdir()
+        source.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        (alpha / "bundled-dependencies.json").write_text(
+            json.dumps({
+                "bundles": [{
+                    "utility": "beta",
+                    "version": "1.0.0",
+                    "source": "hooks/credential.py",
+                    "destination": "credential.py",
+                }]
+            }),
+            encoding="utf-8",
+        )
+        install = alpha / "install.sh"
+        install.write_text(
+            "#!/usr/bin/env bash\n"
+            'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
+            encoding="utf-8",
+        )
+        install.chmod(install.stat().st_mode | stat.S_IXUSR)
+        runtime_file = alpha / "bin" / "use-beta.py"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text(
+            "subprocess.run(['../beta/hooks/credential.py'], check=True)\n",
+            encoding="utf-8",
+        )
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"{runtime_file}:1: runtime reference to sibling utility 'beta'",
+            result.stderr,
+        )
+
+    def test_bundle_version_must_match_sibling_version(self):
+        alpha = self.write_utility("alpha")
+        beta = self.write_utility("beta")
+        source = beta / "hooks" / "credential.py"
+        source.parent.mkdir()
+        source.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        (alpha / "bundled-dependencies.json").write_text(
+            json.dumps({
+                "bundles": [{
+                    "utility": "beta",
+                    "version": "9.9.9",
+                    "source": "hooks/credential.py",
+                    "destination": "credential.py",
+                }]
+            }),
+            encoding="utf-8",
+        )
+        install = alpha / "install.sh"
+        install.write_text(
+            "#!/usr/bin/env bash\n"
+            'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
+            encoding="utf-8",
+        )
+        install.chmod(install.stat().st_mode | stat.S_IXUSR)
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"pinned version '9.9.9' does not match {beta}/VERSION ('1.0.0')",
             result.stderr,
         )
 
