@@ -119,6 +119,23 @@ class StructureCheckerTests(unittest.TestCase):
             }),
             encoding="utf-8",
         )
+        org_example = self.fixture / "org-rule-guard" / "examples" / "settings.json"
+        org_example.parent.mkdir()
+        org_example.write_text(
+            json.dumps({
+                "hooks": {
+                    "PreToolUse": [{
+                        "matcher": "Write|Edit|MultiEdit|Bash",
+                        "hooks": [{
+                            "type": "command",
+                            "command": "python3 ~/.claude/hooks/org-rule-guard.py",
+                            "timeout": 10,
+                        }],
+                    }]
+                }
+            }),
+            encoding="utf-8",
+        )
         self.write_readme()
 
     def run_checker(self):
@@ -180,6 +197,21 @@ class StructureCheckerTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("settings-both.json: invalid JSON", result.stderr)
+
+    def test_shipped_org_example_matcher_drift_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "org-rule-guard" / "examples" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["hooks"]["PreToolUse"][0]["matcher"] = "Write|Edit|Bash"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "org-rule-guard/examples/settings.json: settings wiring does not match",
+            result.stderr,
+        )
 
     def test_non_posix_shell_shebang_fails(self):
         utility = self.write_utility("alpha")
