@@ -50,6 +50,11 @@ def token(prefix, n=40, seed=0):
     return prefix + alnum(n, seed)
 
 
+def placeholder(prefix, n=40):
+    marker = "REPLACE"
+    return prefix + marker + alnum(n - len(marker))
+
+
 PEM_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
 
 
@@ -185,6 +190,39 @@ class HookProcess(unittest.TestCase):
             "content": "export GITHUB_TOKEN=ghp_" + "x" * 40}})
         self.assertIsNone(r)
 
+    def test_placeholder_values_allowed_for_every_supported_tool(self):
+        cases = (
+            ("Write", {"file_path": "/tmp/README.md",
+                       "content": "export GITHUB_TOKEN=" + placeholder("ghp_", 40)}),
+            ("Edit", {"file_path": "/tmp/config.py", "old_string": "x",
+                      "new_string": "KEY = '" + placeholder("sk-ant-", 48) + "'"}),
+            ("MultiEdit", {"file_path": "/tmp/config.py", "edits": [
+                {"old_string": "x", "new_string": placeholder("npm_", 36)}]}),
+            ("Bash", {"command": "curl -H 'Authorization: Bearer "
+                       + placeholder("ghp_", 40) + "' https://api.example"}),
+        )
+        for tool, tool_input in cases:
+            with self.subTest(tool=tool):
+                self.assertIsNone(run_hook({"tool_name": tool, "tool_input": tool_input}))
+
+    def test_gitleaks_allow_marker_suppresses_denial_for_every_supported_tool(self):
+        cases = (
+            ("Write", {"file_path": "/tmp/fixture.py",
+                       "content": "fixture = " + token("ghp_")
+                       + "  # gitleaks:allow"}),
+            ("Edit", {"file_path": "/tmp/fixture.py", "old_string": "x",
+                      "new_string": "fixture = " + token("sk-ant-", 48)
+                      + "  # gitleaks:allow"}),
+            ("MultiEdit", {"file_path": "/tmp/fixture.py", "edits": [
+                {"old_string": "x", "new_string": "fixture = "
+                 + token("npm_", 36) + "  # gitleaks:allow"}]}),
+            ("Bash", {"command": "printf '%s\\n' '" + token("ghp_")
+                       + "' # gitleaks:allow"}),
+        )
+        for tool, tool_input in cases:
+            with self.subTest(tool=tool):
+                self.assertIsNone(run_hook({"tool_name": tool, "tool_input": tool_input}))
+
     def test_malformed_json_fails_open(self):
         proc = subprocess.run([sys.executable, HOOK], input=b"{not json",
                               capture_output=True, timeout=20)
@@ -193,6 +231,22 @@ class HookProcess(unittest.TestCase):
 
     def test_non_dict_payload_fails_open(self):
         self.assertIsNone(run_hook(["list", "not", "dict"]))
+
+    def test_unexpected_hook_input_fails_open(self):
+        cases = (
+            {},
+            {"tool_name": "Write"},
+            {"tool_name": "Write", "tool_input": None},
+            {"tool_name": "Write", "tool_input": []},
+            {"tool_name": "Write", "tool_input": {"content": ["not", "text"]}},
+            {"tool_name": "Edit", "tool_input": {"new_string": {"not": "text"}}},
+            {"tool_name": "MultiEdit", "tool_input": {
+                "edits": [{"new_string": {"not": "text"}}]}},
+            {"tool_name": "Bash", "tool_input": {"command": {"not": "text"}}},
+        )
+        for payload in cases:
+            with self.subTest(payload=payload):
+                self.assertIsNone(run_hook(payload))
 
     def test_unknown_tool_without_fields_allowed(self):
         self.assertIsNone(run_hook({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}))
@@ -418,4 +472,3 @@ class Install(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

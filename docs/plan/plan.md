@@ -38,7 +38,10 @@ tool; nothing shared between folders except the license and this plan.
   Edit, MultiEdit and Bash calls whose body carries a high-signal credential
   value. Fails open. Placeholders and `gitleaks:allow` pass.
 - `hooks/test_credential_guard.py` — unittest suite; fixtures are built at
-  runtime so the test file itself never contains a token-shaped literal.
+  runtime so the test file itself never contains a token-shaped literal. It
+  covers the built-in matcher, denied Write/Edit/MultiEdit/Bash calls,
+  placeholder and `gitleaks:allow` pass paths for each tool shape, malformed
+  and unexpected-input fail-open behavior, and the installer contract.
 - `bin/bao-as` — `bao-as <instance> <command...>`: AppRole login to one
   named OpenBao/Vault instance with credentials passed as `@file`, then
   `exec` the command with the token only in its environment. Refuses to
