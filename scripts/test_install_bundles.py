@@ -279,6 +279,53 @@ class SelectiveInstallTests(unittest.TestCase):
             "permissionDecisionReason"
         ])
 
+    def test_org_rule_guard_keeps_credential_rule_when_bundle_is_unavailable(self):
+        """The org hook remains safe if its optional copied companion is gone."""
+        declaration = self.bundle_declaration()
+        release = self.stage_release("agent-secrets", "org-rule-guard")
+        home = self.temp_dir("org-rule-guard-fallback-home-")
+        runtime = self.temp_dir("org-rule-guard-fallback-runtime-")
+        state = self.temp_dir("org-rule-guard-fallback-state-")
+
+        source = release / declaration["utility"] / PurePosixPath(declaration["source"])
+        result = self.run_install(release, "org-rule-guard", home, runtime)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        hook_dst = home / ".claude" / "hooks" / "org-rule-guard.py"
+        bundle_dst = (
+            hook_dst.with_suffix("") / PurePosixPath(declaration["destination"])
+        )
+        self.assertTrue(bundle_dst.is_file(), result.stdout)
+        self.assertEqual(bundle_dst.read_bytes(), source.read_bytes())
+
+        # The copied companion is an install-time enhancement, not a runtime
+        # dependency of org-rule-guard.  Removing it models an unavailable
+        # bundle without giving the hook access to the source checkout.
+        bundle_dst.unlink()
+        shutil.rmtree(release)
+        self.assertFalse(bundle_dst.exists())
+        self.assertFalse(release.exists())
+
+        credential_payload = {
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(runtime / "notes.md"),
+                "content": "token = " + token("ghp_", 36, seed=11),
+            },
+        }
+        credential_result = self.run_installed_hook(
+            hook_dst, home, runtime, credential_payload, state
+        )
+        self.assertEqual(credential_result.returncode, 0, credential_result.stderr)
+        credential_decision = json.loads(credential_result.stdout)
+        self.assertEqual(
+            credential_decision["hookSpecificOutput"]["permissionDecision"], "deny"
+        )
+        self.assertIn(
+            "GitHub token",
+            credential_decision["hookSpecificOutput"]["permissionDecisionReason"],
+        )
+
     def test_declared_bundle_installs_and_runs_without_checkout(self):
         declaration = self.bundle_declaration()
         checkout = self.stage_checkout()
