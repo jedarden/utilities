@@ -14,13 +14,22 @@ installed layout.
 ## Installing one utility
 
 Forgejo is the canonical repository for this project. GitHub is a read-only
-mirror, so clone from Forgejo to get the source of truth:
+mirror, so clone from Forgejo to get the source of truth. For a reproducible
+install, select the utility's namespaced release tag; each utility README
+documents its pin, upgrade, and removal lifecycle:
 
 ```bash
-git clone https://git.ardenone.com/jedarden/utilities.git ~/utilities
-~/utilities/agent-secrets/install.sh --help    # credential guard hook, bao-as, policies
-~/utilities/org-rule-guard/install.sh --help   # PreToolUse guard, denial log, settings wiring
+git clone --branch agent-secrets/v0.1.0 --depth 1 \
+  https://git.ardenone.com/jedarden/utilities.git ~/utilities-agent-secrets
+~/utilities-agent-secrets/agent-secrets/install.sh --wire
+
+git clone --branch org-rule-guard/v0.1.0 --depth 1 \
+  https://git.ardenone.com/jedarden/utilities.git ~/utilities-org-rule-guard
+~/utilities-org-rule-guard/org-rule-guard/install.sh --wire
 ```
+
+Replace `v0.1.0` with the released version you want. The utility-specific
+README is the contract for upgrading and removing an installed copy.
 
 ## Structure
 

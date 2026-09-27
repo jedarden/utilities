@@ -20,18 +20,60 @@ Background: [*'Ignore .env' is not a defense*](https://jedarden.com/notes/ignore
 
 ## Install
 
+For a reproducible install, select the utility's release tag before running
+the installer. The tag is the version selector; `install.sh` intentionally has
+no separate `--version` flag. Keep a checkout per utility so pinning this
+utility does not change the source revision used for another utility in the
+monorepo:
+
 ```bash
-git clone https://github.com/jedarden/utilities ~/utilities
-~/utilities/agent-secrets/install.sh --wire     # copies the hook + bao-as, adds the PreToolUse entry
+git clone --branch agent-secrets/v0.1.0 --depth 1 \
+  https://git.ardenone.com/jedarden/utilities.git ~/utilities-agent-secrets
+~/utilities-agent-secrets/agent-secrets/install.sh --wire
 ```
 
-Without `--wire` the script prints the `settings.json` snippet instead of
-editing anything, and it never replaces a hook or `bao-as` copy already at a
-destination without `--force`. `--uninstall` removes what it installed,
-refusing a file this folder did not install unless `--force` is given, and
-leaves `settings.json` and `~/.config/bao-as/` (your credential files)
-untouched. Python 3 and bash are the only dependencies; `bao-as` additionally
-needs the `bao` (or `vault`, via `BAO_AS_BIN=vault`) CLI.
+The same command works with any released `agent-secrets/vX.Y.Z` tag. Without
+`--wire` the script prints the `settings.json` snippet instead of editing
+anything, and it never replaces a hook or `bao-as` copy already at a
+destination without `--force`. `--wire` is the upgrade mode: it replaces the
+installed hook and `bao-as` with the copies from the selected checkout and
+merges the hook entry into `settings.json`.
+
+Python 3 and bash are the only dependencies; `bao-as` additionally needs the
+`bao` (or `vault`, via `BAO_AS_BIN=vault`) CLI.
+
+### Pin, upgrade, and remove
+
+To upgrade an existing tagged install, fetch the new release, check it out,
+and run that release's installer with `--wire`:
+
+```bash
+cd ~/utilities-agent-secrets
+git fetch --tags origin
+git checkout --detach agent-secrets/vX.Y.Z
+./agent-secrets/install.sh --wire
+```
+
+The installer preserves `~/.config/bao-as/`, including `instances.conf` and
+the AppRole credential files. Review and commit any local changes in the
+source checkout before changing tags; `git checkout` will refuse to overwrite
+uncommitted work.
+
+To remove the installed files, run `--uninstall` from the exact release
+checkout that supplied them (or from the currently installed release after an
+upgrade):
+
+```bash
+./agent-secrets/install.sh --uninstall
+```
+
+The uninstaller removes the hook and `bao-as` only when they still match this
+checkout, refusing a hand-edited or unknown copy unless `--force` is supplied.
+It intentionally leaves `settings.json` and `~/.config/bao-as/` untouched.
+After uninstalling, remove this utility's `PreToolUse` command from
+`settings.json` yourself; keep the entry if another installed copy still uses
+that same destination. The source checkout can then be deleted if it is no
+longer needed.
 
 Run the tests:
 

@@ -135,22 +135,56 @@ allow.
 ## Install
 
 ```bash
-~/utilities/org-rule-guard/install.sh            # copy if absent; print the settings snippet
-~/utilities/org-rule-guard/install.sh --wire     # also add the PreToolUse entry to settings.json
-~/utilities/org-rule-guard/install.sh --force    # replace the hook already at the destination
-~/utilities/org-rule-guard/install.sh --uninstall
+git clone --branch org-rule-guard/v0.1.0 --depth 1 \
+  https://git.ardenone.com/jedarden/utilities.git ~/utilities-org-rule-guard
+~/utilities-org-rule-guard/org-rule-guard/install.sh --wire
 ```
+
+For a reproducible install, select an `org-rule-guard/vX.Y.Z` release tag before
+running the installer. The tag is the version selector; `install.sh` has no
+separate `--version` flag. Keep a checkout per utility so changing this tag
+does not change the source revision used for another utility in the monorepo.
 
 A hook already at `~/.claude/hooks/org-rule-guard.py` is live enforcement, so a
 bare run never overwrites it: it prints the destination, says `not overwritten`,
 and leaves the deployed copy alone. `--force` replaces it with this copy;
-`--wire` installs and merges the settings entry in one step. `--uninstall` is
-bound by the same rule in the direction that matters more: it refuses to remove
-a file this folder did not install, since on a machine still running the
-pre-port hook that file is enforcement for the whole fleet. `--force` overrides.
-Neither `--wire` nor `--uninstall` touches `settings.json` beyond the one entry,
-and the denial log is never removed by the installer. Python 3 and bash are the
-only dependencies.
+`--wire` replaces it and merges the settings entry in one step. `--wire` also
+refreshes the pinned `agent-secrets` credential-guard bundle from the selected
+release checkout. Python 3 and bash are the only dependencies.
+
+### Pin, upgrade, and remove
+
+To upgrade an existing tagged install, fetch the new release, check it out,
+and run that release's installer with `--wire`:
+
+```bash
+cd ~/utilities-org-rule-guard
+git fetch --tags origin
+git checkout --detach org-rule-guard/vX.Y.Z
+./org-rule-guard/install.sh --wire
+```
+
+Review and commit any local changes in the source checkout before changing
+tags; `git checkout` will refuse to overwrite uncommitted work. The upgrade
+refreshes both the org hook and its bundled credential guard. It does not
+remove the denial log at
+`${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/`.
+
+To remove the installed files, run `--uninstall` from the exact release
+checkout that supplied them (or from the currently installed release after an
+upgrade):
+
+```bash
+./org-rule-guard/install.sh --uninstall
+```
+
+The uninstaller removes the org hook and its bundled credential guard only when
+they still match this checkout, refusing a hand-edited or unknown copy unless
+`--force` is supplied. It intentionally leaves `settings.json` and the denial
+log untouched. After uninstalling, remove this utility's `PreToolUse` command
+from `settings.json` yourself; keep the entry if another installed copy still
+uses that same destination. The source checkout can then be deleted if it is
+no longer needed.
 
 Promoting the copy that logs is what turns the learning signal on — the live
 hook as of 2026-09 still predates the log and writes nothing.
