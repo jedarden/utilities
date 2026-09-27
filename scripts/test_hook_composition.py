@@ -92,6 +92,8 @@ class HookComposition(unittest.TestCase):
         ])
         self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|Bash")
         self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entries[0]["hooks"][0]["timeout"], 10)
+        self.assertNotIn("timeout", entries[1]["hooks"][0])
 
     def test_shipped_matchers_cover_every_tool_class_the_hooks_inspect(self):
         with COMBINED_SETTINGS.open(encoding="utf-8") as handle:

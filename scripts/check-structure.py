@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import stat
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -74,6 +77,8 @@ README_TABLE_HEADER = re.compile(r"^\s*\|\s*Folder\s*\|")
 README_TABLE_SEPARATOR = re.compile(r"^\s*:?-{3,}:?\s*$")
 README_FOLDER_LINK = re.compile(r"^\[([^]]+)\]\(([^)]+)\)$")
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+COMBINED_SETTINGS = PurePosixPath("docs/examples/settings-both.json")
+WIRED_UTILITIES = ("agent-secrets", "org-rule-guard")
 
 
 def is_utility_directory(path: Path) -> bool:
@@ -512,6 +517,127 @@ def readme_table_errors(root: Path, utilities: list[Path]) -> list[str]:
     return errors
 
 
+def _settings_pretooluse(settings: object, path: Path) -> tuple[list[object] | None, list[str]]:
+    """Return a settings file's PreToolUse entries with shape diagnostics."""
+
+    if not isinstance(settings, dict):
+        return None, [f"{path}: settings example must contain a JSON object"]
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return None, [f"{path}: settings example must contain a 'hooks' object"]
+    entries = hooks.get("PreToolUse")
+    if not isinstance(entries, list):
+        return None, [f"{path}: settings example must contain a 'PreToolUse' list"]
+    return entries, []
+
+
+def _normalise_generated_commands(entries: list[object], home: Path) -> list[object]:
+    """Rewrite temporary HOME paths to the documented ``~`` spelling."""
+
+    prefix = f"python3 {home}/"
+    normalised = json.loads(json.dumps(entries))
+    for entry in normalised:
+        if not isinstance(entry, dict):
+            continue
+        hooks = entry.get("hooks")
+        if not isinstance(hooks, list):
+            continue
+        for hook in hooks:
+            if not isinstance(hook, dict):
+                continue
+            command = hook.get("command")
+            if isinstance(command, str) and command.startswith(prefix):
+                hook["command"] = "python3 ~/" + command[len(prefix):]
+    return normalised
+
+
+def _sort_settings_entries(entries: list[object]) -> list[object]:
+    """Make independent PreToolUse entries comparable regardless of order."""
+
+    return sorted(entries, key=lambda entry: json.dumps(entry, sort_keys=True))
+
+
+def combined_settings_wiring_errors(root: Path) -> list[str]:
+    """Verify the combined settings example against both live installers.
+
+    The installers are the source of truth for destinations, matchers, and
+    hook options.  Running them in a disposable HOME exercises the same
+    ``--wire`` code CI ships, while normalising only the temporary HOME path
+    back to the spelling used by the checked-in example.
+    """
+
+    settings_path = root / Path(*COMBINED_SETTINGS.parts)
+    if not settings_path.is_file():
+        if not all((root / utility).is_dir() for utility in WIRED_UTILITIES):
+            return []
+        return [f"{settings_path}: combined settings example is missing"]
+
+    try:
+        example = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return [f"{settings_path}: invalid JSON ({error})"]
+    expected, errors = _settings_pretooluse(example, settings_path)
+    if errors:
+        return errors
+    if not all((root / utility).is_dir() for utility in WIRED_UTILITIES):
+        return []
+
+    with tempfile.TemporaryDirectory(prefix="check-settings-") as directory:
+        temp_root = Path(directory)
+        home = temp_root / "home"
+        generated_path = temp_root / "settings.json"
+        environment = os.environ.copy()
+        environment["HOME"] = str(home)
+        environment["CLAUDE_SETTINGS"] = str(generated_path)
+        for variable in (
+            "CLAUDE_HOOKS_DIR",
+            "BIN_DIR",
+            "BAO_AS_CONFIG_DIR",
+            "XDG_CONFIG_HOME",
+            "XDG_STATE_HOME",
+        ):
+            environment.pop(variable, None)
+
+        for utility in WIRED_UTILITIES:
+            installer = root / utility / "install.sh"
+            try:
+                result = subprocess.run(
+                    ["sh", str(installer), "--wire"],
+                    cwd=root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                return [f"{installer}: could not exercise --wire ({error})"]
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip()
+                return [
+                    f"{installer}: --wire failed with exit {result.returncode}"
+                    + (f": {detail}" if detail else "")
+                ]
+
+        try:
+            generated = json.loads(generated_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            return [f"{generated_path}: installer generated invalid JSON ({error})"]
+        actual, errors = _settings_pretooluse(generated, generated_path)
+        if errors:
+            return errors
+        actual = _normalise_generated_commands(actual, home)
+        if _sort_settings_entries(actual) != _sort_settings_entries(expected):
+            return [
+                f"{settings_path}: PreToolUse wiring does not match the entries "
+                f"generated by {WIRED_UTILITIES[0]}/install.sh and "
+                f"{WIRED_UTILITIES[1]}/install.sh\n"
+                f"  example:  {json.dumps(expected, sort_keys=True)}\n"
+                f"  generated: {json.dumps(actual, sort_keys=True)}"
+            ]
+    return []
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     candidates = sorted(
@@ -550,6 +676,7 @@ def main() -> int:
         )
 
     errors.extend(readme_table_errors(root, candidates))
+    errors.extend(combined_settings_wiring_errors(root))
 
     if errors:
         for error in errors:
@@ -561,7 +688,8 @@ def main() -> int:
         "check-structure: "
         f"{len(candidates)} utilities have README.md, VERSION, install.sh "
         "and pass the POSIX-shell, Python-stdlib, package-install, and "
-        "cross-utility checks; README Folder table agrees"
+        "cross-utility checks; README Folder table and combined hook settings "
+        "agree"
     )
     return 0
 

@@ -60,6 +60,67 @@ class StructureCheckerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def write_wiring_utility(self, name, hook_name, timeout=None):
+        utility = self.write_utility(name)
+        timeout_field = ""
+        if timeout is not None:
+            timeout_field = f', "timeout": {timeout}'
+        (utility / "install.sh").write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            'mkdir -p "$HOME/.claude/hooks"\n'
+            'python3 - "$CLAUDE_SETTINGS" "$HOME/.claude/hooks/'
+            f'{hook_name}" <<\'PY\'\n'
+            "import json, os, sys\n"
+            "path, hook = sys.argv[1:]\n"
+            "settings = {}\n"
+            "if os.path.exists(path):\n"
+            "    with open(path) as handle:\n"
+            "        settings = json.load(handle)\n"
+            "settings.setdefault(\"hooks\", {}).setdefault(\"PreToolUse\", []).append({\n"
+            "    \"matcher\": \"Write|Edit|MultiEdit|Bash\",\n"
+            f'    "hooks": [{{"type": "command", "command": "python3 " + hook{timeout_field}}}]\n'
+            "})\n"
+            "with open(path, \"w\") as handle:\n"
+            "    json.dump(settings, handle)\n"
+            "PY\n",
+            encoding="utf-8",
+        )
+        (utility / "install.sh").chmod(
+            (utility / "install.sh").stat().st_mode | stat.S_IXUSR
+        )
+
+    def write_wiring_fixture(self):
+        self.write_wiring_utility("agent-secrets", "credential-guard.py")
+        self.write_wiring_utility("org-rule-guard", "org-rule-guard.py", timeout=10)
+        docs = self.fixture / "docs" / "examples"
+        docs.mkdir(parents=True)
+        (docs / "settings-both.json").write_text(
+            json.dumps({
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Write|Edit|MultiEdit|Bash",
+                            "hooks": [{
+                                "type": "command",
+                                "command": "python3 ~/.claude/hooks/org-rule-guard.py",
+                                "timeout": 10,
+                            }],
+                        },
+                        {
+                            "matcher": "Write|Edit|MultiEdit|Bash",
+                            "hooks": [{
+                                "type": "command",
+                                "command": "python3 ~/.claude/hooks/credential-guard.py",
+                            }],
+                        },
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+        self.write_readme()
+
     def run_checker(self):
         return subprocess.run(
             [sys.executable, "scripts/check-structure.py"],
@@ -77,6 +138,48 @@ class StructureCheckerTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 utilities have README.md, VERSION, install.sh", result.stdout)
+
+    def test_combined_settings_wiring_matches_both_installers(self):
+        self.write_wiring_fixture()
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("combined hook settings agree", result.stdout)
+
+    def test_combined_settings_timeout_drift_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["hooks"]["PreToolUse"][1]["hooks"][0]["timeout"] = 10
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PreToolUse wiring does not match", result.stderr)
+
+    def test_combined_settings_matcher_drift_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["hooks"]["PreToolUse"][0]["matcher"] = "Write|Edit|Bash"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PreToolUse wiring does not match", result.stderr)
+
+    def test_combined_settings_invalid_json_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings_path.write_text("{\n", encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("settings-both.json: invalid JSON", result.stderr)
 
     def test_non_posix_shell_shebang_fails(self):
         utility = self.write_utility("alpha")
