@@ -25,7 +25,8 @@ tool; nothing shared between folders except the license and this plan.
 - The leaf contract is enforced by `scripts/check-structure.py`, which is
   invoked by that same CI gate before the version/tag check. Every top-level
   utility must own `README.md`, `VERSION`, and `install.sh`; symlinks and
-  runtime references into a sibling utility are rejected.
+  runtime references into a sibling utility are rejected, and the README
+  Folder table must match the top-level utility folders in both directions.
 
 ## Components
 

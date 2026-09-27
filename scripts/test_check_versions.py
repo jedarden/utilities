@@ -57,11 +57,27 @@ class VersionCheckerTests(unittest.TestCase):
         install.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
         install.chmod(install.stat().st_mode | stat.S_IXUSR)
 
+    def write_readme(self):
+        rows = "\n".join(
+            f"| [`{name}/`]({name}/) | test utility |"
+            for name in sorted(
+                name for name in self.utility_names if (self.fixture / name).is_dir()
+            )
+        )
+        (self.fixture / "README.md").write_text(
+            "# test utilities\n\n"
+            "| Folder | What it is |\n"
+            "|---|---|\n"
+            f"{rows}\n",
+            encoding="utf-8",
+        )
+
     def commit(self, message):
+        self.write_readme()
         paths = ["scripts/check-structure.py"] + [
             name for name in self.utility_names if (self.fixture / name).exists()
         ]
-        self.git("add", *paths)
+        self.git("add", "README.md", *paths)
         self.git("add", "--update", "--", *self.utility_names)
         self.git("commit", "--quiet", "-m", message)
 
@@ -114,6 +130,48 @@ class VersionCheckerTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("2 utilities, VERSION files and tags agree", result.stdout)
+
+    def test_readme_missing_utility_row_fails(self):
+        self.write_utility("widget", "1.0.0")
+        self.commit("add widget")
+        self.tag("widget/v1.0.0")
+        readme = self.fixture / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "| [`widget/`](widget/) | test utility |\n", ""
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "utility folder 'widget' is missing from the Folder table",
+            result.stderr,
+        )
+
+    def test_readme_row_for_missing_utility_fails(self):
+        self.write_utility("widget", "1.0.0")
+        self.commit("add widget")
+        self.tag("widget/v1.0.0")
+        readme = self.fixture / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "| [`widget/`](widget/) | test utility |\n",
+                "| [`widget/`](widget/) | test utility |\n"
+                "| [`ghost/`](ghost/) | test utility |\n",
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Folder table names missing utility folder 'ghost'",
+            result.stderr,
+        )
 
     def test_tagged_commit_without_version_fails(self):
         self.git("commit", "--quiet", "--allow-empty", "-m", "empty initial commit")
