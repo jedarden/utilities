@@ -15,7 +15,15 @@ installed layout.
 
 Forgejo is the canonical repository for this project. GitHub is a read-only
 mirror, so clone from Forgejo to get the source of truth. For a reproducible
-install, select the utility's namespaced release tag; each utility README
+install, first list the utility's released tags from the canonical Forgejo
+remote. Replace `agent-secrets` with the utility folder you want to install:
+
+```bash
+git ls-remote --tags https://git.ardenone.com/jedarden/utilities.git \
+  'agent-secrets/v*'
+```
+
+Select one of the returned namespaced release tags; each utility README
 documents its pin, upgrade, and removal lifecycle:
 
 ```bash
