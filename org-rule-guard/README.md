@@ -120,12 +120,37 @@ second waits and rereads the first result, preserving both hook entries and
 unrelated settings. Manual writers that do not honor the same advisory lock
 must not edit the file during a wire; their races are outside this guarantee.
 
+`CLAUDE_SETTINGS` defaults to `~/.claude/settings.json` and is used literally
+for `--wire`. An absolute value is used as an absolute path. A relative value
+is resolved against the installer's current working directory, not against the
+utility checkout or `$HOME`; use the same working directory as well as the
+same value on every run. The settings parent directory must already exist:
+the settings step exits nonzero without creating a missing parent, settings
+file, lock, or backup. The utility destinations may already have been copied
+before that failed settings step, so retry after fixing the path.
+
+Symlinks in the path are resolved before the settings file is read, locked,
+backed up, or replaced. A final-component symlink is preserved and its target
+is updated; the target's directory receives the `.lock`, temporary file, and
+`.bak`. The target must be writable, and its parent must exist.
+
+The two installers do not coordinate different settings files. If one run
+uses path A and a later run uses distinct path B, each file receives only the
+entry for the utility run against it, and each existing file gets its own
+one-time pre-wiring `.bak`. Neither backup is a rollback point for the
+combined installation. To compose both guards and retain one rollback point,
+run both installers against the same effective settings target (the same path
+or symlink-resolved target) every time.
+
 When `--wire` changes an existing settings file, it creates
-`$CLAUDE_SETTINGS.bak` (or `~/.claude/settings.json.bak`) immediately before
-the first wiring change, but only if that backup does not already exist. The
-backup therefore remains the pre-wiring settings file when another utility is
-wired later or this installer is run again. If the settings file does not yet
-exist, no backup is created because there is no prior file to preserve.
+the effective settings target's `.bak` (normally
+`$CLAUDE_SETTINGS.bak`, or `~/.claude/settings.json.bak`) immediately before
+the first wiring change, but only if that backup does not already exist. For a
+symlinked settings value, this is beside the resolved target, as described
+above. The backup therefore remains the pre-wiring settings file when another
+utility is wired later or this installer is run again. If the settings file
+does not yet exist, no backup is created because there is no prior file to
+preserve.
 
 The `.bak` is a permanent, one-time pre-wiring snapshot rather than a rolling
 backup. `--wire` and `--uninstall` never rewrite or remove an existing backup.

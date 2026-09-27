@@ -90,11 +90,20 @@ import shutil
 import stat
 import sys
 import tempfile
-path, hook = sys.argv[1], sys.argv[2]
+requested_path, hook = sys.argv[1], sys.argv[2]
+# Resolve aliases before taking the lock or replacing the file.  In
+# particular, os.replace() would otherwise replace a final-component symlink
+# instead of the settings file it names.
+path = os.path.realpath(requested_path)
 cmd = f"python3 {hook}"
 lock_path = path + ".lock"
 settings_dir = os.path.dirname(os.path.abspath(path))
 settings_name = os.path.basename(path)
+
+if not os.path.isdir(settings_dir):
+    print(f"install.sh: refusing to wire {requested_path}: settings parent "
+          f"directory does not exist: {settings_dir}", file=sys.stderr)
+    raise SystemExit(1)
 
 def snapshot_backup():
     backup = path + ".bak"
@@ -159,9 +168,9 @@ with open(lock_path, "a+") as lock:
                     os.unlink(tmp)
                 except FileNotFoundError:
                     pass
-        print(f"wired      {path}")
+        print(f"wired      {requested_path}")
     else:
-        print(f"already    {path}")
+        print(f"already    {requested_path}")
 PY
 else
   echo

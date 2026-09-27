@@ -688,16 +688,19 @@ class Install(unittest.TestCase):
                         CLAUDE_SETTINGS=self.settings)
 
     def run_install(self, *args):
-        proc = subprocess.run(["bash", self.script, *args], capture_output=True,
-                              env=self.env, timeout=30)
+        proc = self.run_install_raw(*args)
         self.assertEqual(proc.returncode, 0, proc.stderr.decode())
         return proc.stdout.decode()
 
     def run_install_expect_failure(self, *args):
-        proc = subprocess.run(["bash", self.script, *args], capture_output=True,
-                              env=self.env, timeout=30)
+        proc = self.run_install_raw(*args)
         self.assertNotEqual(proc.returncode, 0, proc.stdout.decode())
         return proc
+
+    def run_install_raw(self, *args, env=None, cwd=None):
+        return subprocess.run(["bash", self.script, *args], capture_output=True,
+                              env=self.env if env is None else env, cwd=cwd,
+                              timeout=30)
 
     def dst(self):
         return os.path.join(self.hooks_dir, "org-rule-guard.py")
@@ -819,6 +822,105 @@ class Install(unittest.TestCase):
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.dst())
         self.assertFalse(os.path.exists(self.settings + ".bak"), out)
+
+    def test_wire_rejects_a_nonexistent_settings_parent(self):
+        settings = os.path.join(self.root, "missing", "settings.json")
+        env = dict(self.env, CLAUDE_SETTINGS=settings)
+
+        proc = self.run_install_raw("--wire", env=env)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("settings parent directory does not exist",
+                      proc.stderr.decode())
+        self.assertFalse(os.path.exists(os.path.dirname(settings)))
+        self.assertFalse(os.path.exists(settings))
+
+    def test_wire_resolves_a_relative_settings_path_from_the_current_directory(self):
+        cwd = tempfile.mkdtemp(prefix="org-rule-guard-relative-cwd-")
+        _CLEANUP.append(cwd)
+        relative = os.path.join("settings", "settings.json")
+        expected = os.path.join(cwd, relative)
+        os.makedirs(os.path.dirname(expected))
+        env = dict(self.env, CLAUDE_SETTINGS=relative)
+
+        proc = self.run_install_raw("--wire", env=env, cwd=cwd)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+        with open(expected) as fh:
+            settings = json.load(fh)
+        self.assertEqual(
+            settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            "python3 %s" % self.dst(),
+        )
+        self.assertFalse(os.path.exists(os.path.join(self.root, relative)))
+
+    def test_wire_follows_a_settings_symlink_without_replacing_it(self):
+        target = os.path.join(self.root, "target", "settings.json")
+        os.makedirs(os.path.dirname(target))
+        original = b'{"model": "opus"}\n'
+        with open(target, "wb") as fh:
+            fh.write(original)
+        link = os.path.join(self.root, "settings-link.json")
+        os.symlink(target, link)
+        env = dict(self.env, CLAUDE_SETTINGS=link)
+
+        proc = self.run_install_raw("--wire", env=env)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+        self.assertTrue(os.path.islink(link))
+        with open(target) as fh:
+            settings = json.load(fh)
+        self.assertEqual(
+            settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            "python3 %s" % self.dst(),
+        )
+        with open(target + ".bak", "rb") as fh:
+            self.assertEqual(fh.read(), original)
+        self.assertFalse(os.path.exists(link + ".bak"))
+
+    def test_wire_paths_are_independent_when_the_two_utilities_use_different_files(self):
+        first = os.path.join(self.root, "first", "settings.json")
+        second = os.path.join(self.root, "second", "settings.json")
+        for path, model in ((first, "first"), (second, "second")):
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w") as fh:
+                json.dump({"model": model}, fh)
+
+        first_env = dict(self.env, CLAUDE_SETTINGS=first)
+        first_result = self.run_install_raw("--wire", env=first_env)
+        self.assertEqual(first_result.returncode, 0, first_result.stderr.decode())
+
+        agent_script = os.path.join(HERE, os.pardir, os.pardir,
+                                    "agent-secrets", "install.sh")
+        second_env = dict(
+            self.env,
+            CLAUDE_SETTINGS=second,
+            BIN_DIR=os.path.join(self.root, "bin"),
+            BAO_AS_CONFIG_DIR=os.path.join(self.root, "conf", "bao-as"),
+        )
+        second_result = subprocess.run(
+            ["bash", agent_script, "--wire"], capture_output=True,
+            env=second_env, timeout=30)
+        self.assertEqual(second_result.returncode, 0,
+                         second_result.stderr.decode())
+
+        with open(first) as fh:
+            first_settings = json.load(fh)
+        with open(second) as fh:
+            second_settings = json.load(fh)
+        first_commands = [entry["hooks"][0]["command"]
+                          for entry in first_settings["hooks"]["PreToolUse"]]
+        second_commands = [entry["hooks"][0]["command"]
+                           for entry in second_settings["hooks"]["PreToolUse"]]
+        self.assertEqual(first_commands, ["python3 %s" % self.dst()])
+        self.assertEqual(
+            second_commands,
+            ["python3 %s" % os.path.join(self.hooks_dir, "credential-guard.py")],
+        )
+        with open(first + ".bak") as fh:
+            self.assertEqual(json.load(fh), {"model": "first"})
+        with open(second + ".bak") as fh:
+            self.assertEqual(json.load(fh), {"model": "second"})
 
     def test_wire_snapshots_existing_settings_before_first_change(self):
         original = b'{"model": "opus", "hooks": {"Stop": []}}\n'

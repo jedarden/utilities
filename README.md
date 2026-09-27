@@ -57,7 +57,19 @@ because there is no prior file to preserve. Do not rerun a manual `cp` over
 the backup, and do not copy `settings-both.json` over an existing file or
 concatenate the two JSON objects; doing so can discard unrelated settings and
 hooks. If a non-default settings path is used, pass that same path through
-`CLAUDE_SETTINGS` on every run.
+`CLAUDE_SETTINGS` on every run. For a symlinked `CLAUDE_SETTINGS`, the backup
+is beside the resolved target rather than beside the symlink.
+
+For both installers, an absolute `CLAUDE_SETTINGS` value is used as given and
+a relative value is resolved from that run's current working directory. The
+settings parent must already exist; a `--wire` settings step fails without
+creating a missing parent, settings file, lock, or backup. Path symlinks are
+resolved before reading and replacement, so a final-component symlink remains
+in place while its target is updated; the target directory receives the lock
+and backup. Distinct paths are independent: wiring one utility at A and the
+other at B leaves one partial hook entry in each file and one separate
+pre-wiring backup per existing file, with no cross-file rollback point. Use the
+same effective path on every run when composing both utilities.
 
 The merge is protected by an exclusive advisory lock at
 `$SETTINGS.lock`, which the installers keep so every concurrent `--wire` run
