@@ -37,6 +37,18 @@ git clone https://git.ardenone.com/jedarden/utilities.git ~/utilities
 - `docs/research/` — external reference material and prior art
 - `docs/plan/plan.md` — complete plan for the repo
 
+## Releasing
+
+To release a utility, update its `<utility>/VERSION` to the new semver and
+commit the bump. Create a tag in the form `<utility>/vX.Y.Z` at that commit,
+then push the commit and tag together:
+
+```bash
+git push origin main <utility>/vX.Y.Z
+```
+
+Pushing the VERSION bump without its matching tag fails the CI version gate.
+
 ## Runtime constraints
 
 The structural gate scans utility-owned runtime files. Shell scripts must
