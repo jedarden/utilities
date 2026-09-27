@@ -31,16 +31,20 @@ tool; nothing shared between folders except the license and this plan.
 - Each `install.sh` is idempotent and copies into the conventional user
   locations (`~/.claude/hooks/`, `~/.local/bin/`); it never edits a file it
   did not create unless asked with an explicit flag.
-- Versioning is per folder (`<utility>/VERSION`, semver). Git tags are
-  `<utility>/vX.Y.Z`. The contract is enforced by `scripts/check-versions.sh`
-  (run by utilities-ci on every push): every VERSION at HEAD must have a tag
-  at exactly its version, and every `<utility>/v*` tag must point at a commit
-  whose VERSION agrees. Releasing means committing the bump and pushing
-  commit and tag together — `git push origin main <utility>/v<X.Y.Z>` —
-  since pushing the commit alone fails CI until the tag lands.
+- Versioning is per folder (`<utility>/VERSION`, semver), and every utility
+  keeps a `CHANGELOG.md` beside it. Each release adds a concise entry headed
+  `## [X.Y.Z] - YYYY-MM-DD` in the same commit as the VERSION bump. Git tags
+  are `<utility>/vX.Y.Z`. The contract is enforced by
+  `scripts/check-versions.sh` (run by utilities-ci on every push): every
+  VERSION at HEAD must have its current-version changelog heading and a tag at
+  exactly its version, and every `<utility>/v*` tag must point at a commit whose
+  VERSION agrees. Releasing means committing the notes and bump, then pushing
+  commit and tag together — `git push origin main <utility>/v<X.Y.Z>` — since
+  pushing the commit alone fails CI until the tag lands.
 - The leaf contract is enforced by `scripts/check-structure.py`, which is
   invoked by that same CI gate before the version/tag check. Every top-level
-  utility must own `README.md`, `VERSION`, and `install.sh`; symlinks, non-
+  utility must own `README.md`, `VERSION`, `CHANGELOG.md`, and `install.sh`;
+  symlinks, non-
   POSIX shell shebangs, package-manager install commands, non-stdlib Python
   imports, and undeclared runtime references into a sibling utility are
   rejected. The README Folder table must match the top-level utility folders
@@ -166,8 +170,9 @@ Concurrent hook processes take the lock across rotation and their single
   push sensor; runs the unittest suites and shellcheck on every push to
   main, including the org-rule-guard installer contract). Grew the
   policy-template HCL validation suite on 2026-09-16. Since 2026-09-16
-  it also runs `scripts/check-versions.sh` to enforce the VERSION↔tag and
-  self-contained leaf contracts (see Architecture).
+  it also runs `scripts/check-versions.sh` to enforce the VERSION↔tag,
+  current-version changelog, and self-contained leaf contracts (see
+  Architecture).
 - [ ] Phase 3: `org-rule-guard` — extract the working PreToolUse hook from
   `~/.claude/hooks/org-rule-guard.py` (332 lines, six hard-coded rules, one
   stdout deny path, no log). Two changes, in this order: (a) every denial

@@ -53,6 +53,10 @@ class VersionCheckerTests(unittest.TestCase):
         utility.mkdir(parents=True, exist_ok=True)
         (utility / "README.md").write_text(f"# {name}\n", encoding="utf-8")
         (utility / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+        (utility / "CHANGELOG.md").write_text(
+            f"# Changelog\n\n## [{version}] - 2026-01-01\n\n- Initial release.\n",
+            encoding="utf-8",
+        )
         install = utility / "install.sh"
         install.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         install.chmod(install.stat().st_mode | stat.S_IXUSR)
@@ -108,6 +112,10 @@ class VersionCheckerTests(unittest.TestCase):
         old_revision = self.git("rev-parse", "HEAD").stdout.strip()
 
         (self.fixture / "widget" / "VERSION").write_text("1.1.0\n", encoding="utf-8")
+        (self.fixture / "widget" / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [1.1.0] - 2026-01-02\n\n- Changed release.\n",
+            encoding="utf-8",
+        )
         self.commit("bump widget to 1.1.0")
         self.tag("widget/v1.1.0", old_revision)
 

@@ -37,24 +37,27 @@ sibling references. The current `org-rule-guard` bundle of
 `agent-secrets/hooks/credential-guard.py` is the concrete example; its
 standalone credential fallback remains available.
 
-## Version files and tags are a release contract
+## Version files, changelogs, and tags are a release contract
 
 Versioning belongs to each utility: `<utility>/VERSION` contains a semver
-value, and the corresponding release tag is `<utility>/vX.Y.Z`. The contract
-is bidirectional. `scripts/check-versions.sh` verifies that every VERSION at
-`HEAD` has its exact tag and that every utility tag points to a commit whose
-VERSION agrees with the tag.
+value, `<utility>/CHANGELOG.md` records what users should expect from each
+release, and the corresponding release tag is `<utility>/vX.Y.Z`. Every
+release entry uses the exact heading `## [X.Y.Z] - YYYY-MM-DD` and is committed
+with the matching VERSION bump. The contract is bidirectional.
+`scripts/check-versions.sh` verifies that every VERSION at `HEAD` has its
+current-version changelog heading and exact tag, and that every utility tag
+points to a commit whose VERSION agrees with the tag.
 
-Therefore a release is one VERSION bump followed by a matching tag, pushed
-together with the commit:
+Therefore a release is one changelog entry and VERSION bump followed by a
+matching tag, pushed together with the commit:
 
 ```text
 git push origin main <utility>/vX.Y.Z
 ```
 
 Pushing only the VERSION change intentionally leaves the repository failing
-the release gate. This makes the source version and the published identity
-unambiguous for each independently installable utility.
+the release gate. This makes the source version, user-facing change summary,
+and published identity unambiguous for each independently installable utility.
 
 ## Small, dependency-light repository tooling
 

@@ -11,6 +11,8 @@ One addition: every deny appends one JSON line to a log. The Python hook is the
 authoritative rule configuration; each rule below links to its rule slug and
 check in [`hooks/org-rule-guard.py`](hooks/org-rule-guard.py).
 
+See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
+
 ## Relationship with agent-secrets
 
 `org-rule-guard` is a runtime leaf. Its `credential-value` rule is bundled and

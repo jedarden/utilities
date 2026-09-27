@@ -38,6 +38,10 @@ class StructureCheckerTests(unittest.TestCase):
         utility.mkdir(parents=True, exist_ok=True)
         (utility / "README.md").write_text(f"# {name}\n", encoding="utf-8")
         (utility / "VERSION").write_text("1.0.0\n", encoding="utf-8")
+        (utility / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Initial release.\n",
+            encoding="utf-8",
+        )
         install = utility / "install.sh"
         install.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         install.chmod(install.stat().st_mode | stat.S_IXUSR)
@@ -154,7 +158,10 @@ class StructureCheckerTests(unittest.TestCase):
         result = self.run_checker()
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("1 utilities have README.md, VERSION, install.sh", result.stdout)
+        self.assertIn(
+            "1 utilities have README.md, VERSION, CHANGELOG.md, install.sh",
+            result.stdout,
+        )
 
     def test_combined_settings_wiring_matches_both_installers(self):
         self.write_wiring_fixture()
@@ -270,7 +277,7 @@ class StructureCheckerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_required_file_fails_with_file_named(self):
-        for missing in ("README.md", "VERSION", "install.sh"):
+        for missing in ("README.md", "VERSION", "CHANGELOG.md", "install.sh"):
             with self.subTest(missing=missing):
                 self.write_utility("alpha")
                 (self.fixture / "alpha" / missing).unlink()
@@ -285,6 +292,22 @@ class StructureCheckerTests(unittest.TestCase):
                 )
 
                 shutil.rmtree(self.fixture / "alpha")
+
+    def test_current_version_requires_changelog_heading(self):
+        utility = self.write_utility("alpha")
+        (utility / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## [0.9.0] - 2025-12-01\n\n- Older release.\n",
+            encoding="utf-8",
+        )
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "alpha/CHANGELOG.md: missing release heading '## [1.0.0] - YYYY-MM-DD'",
+            result.stderr,
+        )
 
     def test_symlinked_required_file_fails(self):
         utility = self.write_utility("alpha")

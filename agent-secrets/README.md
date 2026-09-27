@@ -18,6 +18,8 @@ descriptors nothing reads back.
 
 Background: [*'Ignore .env' is not a defense*](https://jedarden.com/notes/ignore-env-is-not-a-defense/).
 
+See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
+
 ## Install
 
 For a reproducible install, select the utility's release tag before running

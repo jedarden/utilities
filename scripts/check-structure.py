@@ -23,7 +23,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 
 
-REQUIRED_FILES = ("README.md", "VERSION", "install.sh")
+REQUIRED_FILES = ("README.md", "VERSION", "CHANGELOG.md", "install.sh")
 BUNDLE_MANIFEST = "bundled-dependencies.json"
 REPOSITORY_DIRECTORIES = {"docs", "scripts"}
 TEXT_SUFFIXES = {
@@ -99,6 +99,33 @@ def required_file_errors(utility: Path) -> list[str]:
         elif not path.is_file():
             errors.append(f"{path}: required file is missing")
     return errors
+
+
+def changelog_errors(utility: Path) -> list[str]:
+    """Require release notes for the version currently declared by a utility."""
+
+    changelog = utility / "CHANGELOG.md"
+    if changelog.is_symlink() or not changelog.is_file():
+        return []
+
+    version = _read_first_line(utility / "VERSION").strip()
+    if not version:
+        return []
+
+    try:
+        lines = changelog.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        return [f"{changelog}: cannot read release notes ({error})"]
+
+    heading = re.compile(
+        rf"^## \[{re.escape(version)}\] - [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$"
+    )
+    if not any(heading.fullmatch(line.strip()) for line in lines):
+        return [
+            f"{changelog}: missing release heading "
+            f"'## [{version}] - YYYY-MM-DD'"
+        ]
+    return []
 
 
 def symlink_errors(utility: Path) -> list[str]:
@@ -749,6 +776,7 @@ def main() -> int:
     for utility in candidates:
         if utility.is_symlink():
             continue
+        errors.extend(changelog_errors(utility))
         errors.extend(shell_constraint_errors(utility))
         errors.extend(package_install_errors(utility))
         errors.extend(python_dependency_errors(utility))
@@ -773,7 +801,8 @@ def main() -> int:
 
     print(
         "check-structure: "
-        f"{len(candidates)} utilities have README.md, VERSION, install.sh "
+        f"{len(candidates)} utilities have README.md, VERSION, CHANGELOG.md, "
+        "install.sh "
         "and pass the POSIX-shell, Python-stdlib, package-install, and "
         "cross-utility checks; README Folder table, shipped hook settings "
         "examples, and combined hook settings agree"

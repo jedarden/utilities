@@ -35,7 +35,7 @@ README is the contract for upgrading and removing an installed copy.
 
 - `<utility>/` — one folder per tool, each self-contained
 - `scripts/` — repo tooling, not a utility: `check-structure.py` verifies each
-  utility owns its `README.md`, `VERSION`, and `install.sh`, requires POSIX
+  utility owns its `README.md`, `VERSION`, `CHANGELOG.md`, and `install.sh`, requires POSIX
   `sh` shebangs, rejects package-manager install commands and non-stdlib
   Python imports, rejects undeclared cross-utility runtime references,
   validates the narrow pinned bundle exception, and keeps this table's Folder
@@ -89,7 +89,9 @@ shellcheck agent-secrets/install.sh agent-secrets/bin/bao-as \
    and test commands.
 3. Run the local verification commands above and
    `python3 scripts/check-structure.py`.
-4. Commit the utility, its README row, and its initial/version-bumped
+4. Add the release's `## [X.Y.Z] - YYYY-MM-DD` entry at the top of the
+   utility's `CHANGELOG.md`, including concise user-facing notes. Commit the
+   utility, its README row, `CHANGELOG.md`, and its initial/version-bumped
    `VERSION` together. Create `<utility>/vX.Y.Z` at that commit, then push the
    commit and tag together:
 
@@ -97,20 +99,26 @@ shellcheck agent-secrets/install.sh agent-secrets/bin/bao-as \
    git push origin main <utility>/vX.Y.Z
    ```
 
-   The VERSION bump and matching tag are one release unit; pushing only the
-   commit leaves the version gate red.
+   The VERSION bump, matching changelog entry, and tag are one release unit;
+   the structural gate rejects a VERSION without its release heading, and
+   pushing only the commit leaves the version gate red.
 
 ## Releasing
 
-To release a utility, update its `<utility>/VERSION` to the new semver and
-commit the bump. Create a tag in the form `<utility>/vX.Y.Z` at that commit,
-then push the commit and tag together:
+To release a utility, add a concise user-facing entry to the top of
+`<utility>/CHANGELOG.md` with the exact heading `## [X.Y.Z] - YYYY-MM-DD`,
+update `<utility>/VERSION` to the same `X.Y.Z`, and commit both files together.
+Create a tag in the form `<utility>/vX.Y.Z` at that commit, then push the commit
+and tag together:
 
 ```bash
 git push origin main <utility>/vX.Y.Z
 ```
 
-Pushing the VERSION bump without its matching tag fails the CI version gate.
+CI runs `scripts/check-versions.sh`, which first verifies every utility has a
+current-version changelog heading and then checks the bidirectional
+VERSION↔tag contract. A VERSION bump without its matching changelog entry or
+tag therefore fails the release gate.
 
 ## Bead checkpoint workflow
 
