@@ -11,8 +11,11 @@ folder is independent: it has its own README, its own `VERSION`, and its own
 
 ## Installing one utility
 
+Forgejo is the canonical repository for this project. GitHub is a read-only
+mirror, so clone from Forgejo to get the source of truth:
+
 ```bash
-git clone https://github.com/jedarden/utilities ~/utilities
+git clone https://git.ardenone.com/jedarden/utilities.git ~/utilities
 ~/utilities/agent-secrets/install.sh --help    # credential guard hook, bao-as, policies
 ~/utilities/org-rule-guard/install.sh --help   # PreToolUse guard, denial log, settings wiring
 ```
