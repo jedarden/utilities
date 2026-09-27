@@ -82,6 +82,7 @@ WIRED_UTILITIES = ("agent-secrets", "org-rule-guard")
 SHIPPED_SETTINGS_EXAMPLES = {
     "org-rule-guard": PurePosixPath("examples/settings.json"),
 }
+PYTHON_MIN_FEATURE_VERSION = 9
 
 
 def is_utility_directory(path: Path) -> bool:
@@ -244,8 +245,32 @@ def _local_python_modules(utility: Path) -> set[str]:
     return names
 
 
+def _pep604_annotation_errors(path: Path, tree: ast.AST) -> list[str]:
+    """Reject union annotations whose runtime support starts in Python 3.10."""
+
+    errors = []
+    annotations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.arg) and node.annotation is not None:
+            annotations.append(node.annotation)
+        elif isinstance(node, ast.AnnAssign):
+            annotations.append(node.annotation)
+        elif isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            if node.returns is not None:
+                annotations.append(node.returns)
+
+    for annotation in annotations:
+        for node in ast.walk(annotation):
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+                errors.append(
+                    f"{path}:{node.lineno}: PEP 604 union annotations require "
+                    "Python 3.10; use Python 3.9-compatible annotations"
+                )
+    return errors
+
+
 def python_dependency_errors(utility: Path) -> list[str]:
-    """Reject absolute Python imports outside the stdlib or this utility."""
+    """Check Python 3.9 syntax and reject imports outside the stdlib/utility."""
 
     errors = []
     local_modules = _local_python_modules(utility)
@@ -253,12 +278,19 @@ def python_dependency_errors(utility: Path) -> list[str]:
         if not is_python_file(path):
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(
+                source,
+                filename=str(path),
+                feature_version=PYTHON_MIN_FEATURE_VERSION,
+            )
         except (OSError, UnicodeDecodeError):
             continue
         except SyntaxError as error:
             errors.append(f"{path}:{error.lineno}: invalid Python syntax ({error.msg})")
             continue
+
+        errors.extend(_pep604_annotation_errors(path, tree))
 
         imports = []
         for node in ast.walk(tree):
@@ -803,7 +835,7 @@ def main() -> int:
         "check-structure: "
         f"{len(candidates)} utilities have README.md, VERSION, CHANGELOG.md, "
         "install.sh "
-        "and pass the POSIX-shell, Python-stdlib, package-install, and "
+        "and pass the POSIX-shell, Python-3.9, Python-stdlib, package-install, and "
         "cross-utility checks; README Folder table, shipped hook settings "
         "examples, and combined hook settings agree"
     )

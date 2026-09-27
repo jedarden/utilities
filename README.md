@@ -143,11 +143,12 @@ pull while that check is dirty; flush and commit the checkpoint first.
 The structural gate scans utility-owned runtime files. Shell scripts must
 declare POSIX `sh` and may not install packages with pip, npm, apt, or another
 package manager. Python files are parsed with the standard-library `ast`
-module; absolute imports must resolve to Python's standard library or to code
-inside the same utility. Runtime paths or imports into a sibling utility are
-also rejected. Repository tooling under `scripts/` and documentation under
-`docs/` are exempt; the declared pinned bundle remains install-time source
-copying, not a runtime dependency.
+module using Python 3.9 grammar, and PEP 604 union annotations are rejected;
+absolute imports must resolve to Python's standard library or to code inside
+the same utility. Runtime paths or imports into a sibling utility are also
+rejected. Repository tooling under `scripts/` and documentation under `docs/`
+are exempt; the declared pinned bundle remains install-time source copying,
+not a runtime dependency.
 
 ## License
 

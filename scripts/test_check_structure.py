@@ -264,6 +264,43 @@ class StructureCheckerTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_python_310_match_syntax_fails(self):
+        utility = self.write_utility("alpha")
+        runtime_file = utility / "hooks" / "hook.py"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text(
+            "match value:\n"
+            "    case 1:\n"
+            "        pass\n",
+            encoding="utf-8",
+        )
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"{runtime_file}:", result.stderr)
+        self.assertIn("invalid Python syntax", result.stderr)
+
+    def test_pep604_union_annotation_fails(self):
+        utility = self.write_utility("alpha")
+        runtime_file = utility / "hooks" / "hook.py"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text(
+            "def parse(value: int | str) -> int | str:\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "PEP 604 union annotations require Python 3.10",
+            result.stderr,
+        )
+
     def test_import_from_same_utility_passes(self):
         utility = self.write_utility("alpha")
         (utility / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
