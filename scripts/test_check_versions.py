@@ -77,6 +77,12 @@ class VersionCheckerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def append_readme_references(self, *references):
+        readme = self.fixture / "README.md"
+        with readme.open("a", encoding="utf-8") as handle:
+            for reference in references:
+                handle.write(f"\nInstall `{reference}`.\n")
+
     def commit(self, message):
         self.write_readme()
         paths = ["scripts/check-structure.py"] + [
@@ -134,11 +140,26 @@ class VersionCheckerTests(unittest.TestCase):
         self.commit("add two utilities")
         self.tag("alpha/v1.0.0")
         self.tag("beta/v2.3.4")
+        self.append_readme_references("alpha/v1.0.0", "beta/v2.3.4")
 
         result = self.run_checker()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("2 utilities, VERSION files and tags agree", result.stdout)
+
+    def test_stale_readme_release_pin_fails_the_combined_version_gate(self):
+        self.write_utility("widget", "1.2.3")
+        self.commit("add widget")
+        self.tag("widget/v1.2.3")
+        self.append_readme_references("widget/v1.2.2")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "README.md references widget/v1.2.2 but widget/VERSION reads '1.2.3'",
+            result.stderr,
+        )
 
     def test_stale_bundle_pin_fails_the_combined_version_gate(self):
         self.write_utility("alpha", "1.0.0")

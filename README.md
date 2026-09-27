@@ -66,8 +66,10 @@ path through `CLAUDE_SETTINGS` on every run.
   Python imports, rejects undeclared cross-utility runtime references,
   validates the narrow pinned bundle exception, and keeps this table's Folder
   column in sync with the top-level utility folders; `check-versions.sh` runs
-  that check and verifies each `<utility>/VERSION` has a matching
-  `<utility>/vX.Y.Z` tag (CI runs the combined gate on every push); the
+  that check, verifies each `<utility>/VERSION` has a matching
+  `<utility>/vX.Y.Z` tag, and keeps every namespaced release pin in this
+  README synchronized with the referenced utility's current `VERSION` (CI
+  runs the combined gate on every push); the
   `check-shellcheck.sh` wrapper verifies ShellCheck's minimum version before
   invoking the repository's shell checks
 - `docs/notes/` — features, constraints, design decisions

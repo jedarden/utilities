@@ -12,6 +12,8 @@
 #   - a `<utility>/v*` tag points at a commit where `<utility>/VERSION` is
 #     missing or disagrees with the tag's version (tagged before the bump,
 #     utility folder absent at the tag, ...);
+#   - a `<utility>/vX.Y.Z` release tag referenced in the root README does not
+#     match that utility's current `VERSION` (documentation drift);
 #   - a `bundled-dependencies.json` pin disagrees with its sibling's current
 #     `VERSION` (the structural gate below enforces this lockstep);
 #   - `*/v*` tags exist but no `*/VERSION` file does (utilities unversioned).
@@ -88,6 +90,27 @@ done
 if [[ $utilities -eq 0 ]] && [[ -n $(git tag -l -- '*/v*') ]]; then
     fail "no */VERSION files at HEAD but */v* tags exist"
 fi
+
+# -- documentation: every namespaced release tag in README.md must pin the
+# current version of that utility.  Keep this alongside the release contract
+# so a VERSION bump and its install example have to land together.
+
+readme_refs=$(grep -oE \
+    '[[:alnum:]_.-]+/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?' \
+    README.md 2>/dev/null | sort -u || true)
+for reference in $readme_refs; do
+    utility=${reference%/v*}
+    documented=${reference##*/v}
+    version_file="$utility/VERSION"
+    if [[ ! -f $version_file ]]; then
+        fail "README.md references $reference but $version_file is missing"
+        continue
+    fi
+    current=$(sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$version_file")
+    if [[ $current != "$documented" ]]; then
+        fail "README.md references $reference but $version_file reads '$current'"
+    fi
+done
 
 [[ $errors -eq 0 ]] || die "$errors mismatch(es) between VERSION files and tags"
 
