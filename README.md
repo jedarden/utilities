@@ -41,7 +41,9 @@ README is the contract for upgrading and removing an installed copy.
   validates the narrow pinned bundle exception, and keeps this table's Folder
   column in sync with the top-level utility folders; `check-versions.sh` runs
   that check and verifies each `<utility>/VERSION` has a matching
-  `<utility>/vX.Y.Z` tag (CI runs the combined gate on every push)
+  `<utility>/vX.Y.Z` tag (CI runs the combined gate on every push); the
+  `check-shellcheck.sh` wrapper verifies ShellCheck's minimum version before
+  invoking the repository's shell checks
 - `docs/notes/` — features, constraints, design decisions
 - `docs/examples/` — shipped wiring examples, including the combined
   [`settings-both.json`](docs/examples/settings-both.json) configuration for
@@ -56,6 +58,9 @@ README is the contract for upgrading and removing an installed copy.
 Run the checks from the repository root with Python 3.9 or newer, a POSIX
 `sh`, Bash for `scripts/check-versions.sh`, and ShellCheck 0.9.0 or newer.
 The Python checks use only the standard library; no package install is needed.
+Use `scripts/check-shellcheck.sh` for the shell checks: it fails before invoking
+ShellCheck when the executable is missing, cannot report a numeric version, or
+is older than 0.9.0.
 `agent-secrets/bin/bao-as` defaults to the OpenBao `bao` CLI (OpenBao 2.x). A
 Vault override is supported only under the exact login/KV compatibility
 contract documented in [`agent-secrets/README.md`](agent-secrets/README.md#cli-compatibility-contract);
@@ -76,11 +81,10 @@ python3 -m unittest discover -s scripts -p 'test_hook_composition.py' -v
 python3 -m unittest discover -s scripts -p 'test_install_bundles.py' -v
 ```
 
-Check the shell entry points with:
+Check the shell entry points and enforce the ShellCheck version floor with:
 
 ```bash
-shellcheck agent-secrets/install.sh agent-secrets/bin/bao-as \
-  org-rule-guard/install.sh scripts/check-versions.sh
+scripts/check-shellcheck.sh
 ```
 
 ### Adding a utility

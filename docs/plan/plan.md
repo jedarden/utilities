@@ -183,7 +183,8 @@ records as application data.
   policy-template HCL validation suite on 2026-09-16. Since 2026-09-16
   it also runs `scripts/check-versions.sh` to enforce the VERSION↔tag,
   current-version changelog, and self-contained leaf contracts (see
-  Architecture).
+  Architecture). The repository's `scripts/check-shellcheck.sh` gate enforces
+  ShellCheck 0.9.0 or newer before invoking the shell checks.
 - [ ] Phase 3: `org-rule-guard` — extract the working PreToolUse hook from
   `~/.claude/hooks/org-rule-guard.py` (332 lines, six hard-coded rules, one
   stdout deny path, no log). Two changes, in this order: (a) every denial
