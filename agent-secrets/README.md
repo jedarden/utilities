@@ -38,7 +38,7 @@ Run the tests:
 ```bash
 python3 -m unittest discover -s ~/utilities/agent-secrets/hooks -v     # credential-guard suite
 python3 -m unittest discover -s ~/utilities/agent-secrets/bin -v       # bao-as suite (stub `bao`; contacts no store)
-python3 -m unittest discover -s ~/utilities/agent-secrets/policies -v  # policy-template suite (HCL grammar check)
+python3 -m unittest discover -s ~/utilities/agent-secrets/policies -v  # policy-template suite (HCL-subset check)
 ```
 
 ## The hook
@@ -281,11 +281,25 @@ deny-only, not a replacement for the broad policy, and `deny` wins over
 `sudo`. Do not replace the five paths with only `sys/audit*`; the auditing
 configuration and step-down paths are separate controls.
 
-Every template is checked against the HCL grammar OpenBao's policy loader
-accepts by `policies/test_policies.py` — a stdlib tokenizer + parser, no
-OpenBao binary needed — so a syntax error fails CI instead of surfacing the
-first time someone runs `bao policy write`. The same suite pins each
-template to the grant table above.
+Every template is checked by `policies/test_policies.py` against a small,
+stdlib-only HCL subset and against the grant table above. This is a fast
+structural check for the constructs these templates use, not a reimplementation
+of OpenBao's loader: it currently accepts same-line object members without
+commas, duplicate attributes, and boolean `required_parameters` items that the
+OpenBao 2.5 loader rejects, while rejecting unquoted block labels that OpenBao
+accepts. A passing suite therefore does not prove that arbitrary policy text
+will pass `bao policy write`.
+
+Before applying a rendered policy, run the real local parser on the disposable
+copy (it formats the file in place):
+
+```bash
+bao policy fmt "$rendered"
+```
+
+The final authority is the target OpenBao instance when `bao policy write` is
+run. The same suite pins each template to the grant table above; it does not
+replace that real-loader check.
 
 Turn on check-and-set for the mount so racing writers get a 400 instead of a
 silent overwrite: `bao-as "$instance_name" bao write secret/config

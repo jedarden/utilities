@@ -4,10 +4,9 @@
 Nothing else in CI can read HCL -- the suites in hooks/ and bin/ test
 Python, shellcheck tests shell, and no OpenBao binary is present in the
 builder image (the repo's constraint is stdlib Python, no package
-installs). So a syntax error in a policy template used to ship silently
-and only surface when someone loaded it into a store. This suite closes
-that gap with a tokenizer + recursive-descent parser for exactly the
-grammar OpenBao's policy loader accepts:
+installs). This suite catches mistakes in the small policy subset used by
+the templates with a tokenizer + recursive-descent parser. It is an
+approximation, not OpenBao's authoritative loader:
 
     policy      = { path-block }
     path-block  = "path" STRING "{" { rule } "}"
@@ -21,14 +20,22 @@ grammar OpenBao's policy loader accepts:
 
 with `#` and `//` line comments, `/* */` block comments, and backslash
 escapes inside strings. The rule-key set mirrors vault/policy.go's
-pathValidKeys (OpenBao inherits it), so a template OpenBao would refuse
-to load fails here too, with the file and line named in the message.
-Deliberately stricter in one place, flagged below: a completely empty
-rule set fails here, where the loader would quietly accept it.
+pathValidKeys (OpenBao inherits it), but that does not make this a complete
+implementation of the loader. For example, this parser currently accepts
+same-line object members without commas, duplicate attributes, and boolean
+items in `required_parameters`, all of which the OpenBao 2.5 loader rejects.
+It also rejects unquoted block labels that OpenBao accepts. These are known
+scope differences, not guarantees about arbitrary policy text.
+
+The shipped templates use only the common quoted-path/capabilities subset.
+Run `bao policy fmt` on a disposable rendered copy, or load it with
+`bao policy write`, before applying a policy. A passing test here alone must
+not be described as proof that the real loader will accept the file.
 
 Out of scope, deliberately: the full HCL2 expression grammar (variables,
 functions, interpolation). Policies are data, not programs; a template
-that needs more than the grammar above has outgrown being a template.
+that needs more than the grammar above has outgrown being a template. The
+real loader remains the authority for any construct outside this subset.
 
     python3 -m unittest discover -s agent-secrets/policies -v
 
@@ -45,8 +52,8 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# vault/policy.go: pathValidKeys. Anything else in a path block is a
-# typo, and the real loader rejects it -- so do we.
+# vault/policy.go: pathValidKeys. This keeps the template subset aligned with
+# the known rule names, but the real OpenBao loader is still authoritative.
 PATH_RULE_KEYS = {
     "capabilities",
     "policy",
@@ -70,7 +77,7 @@ ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\"}
 
 
 class HCLError(Exception):
-    """A template the OpenBao policy loader would refuse to load."""
+    """A template this parser's policy subset refuses to load."""
 
     def __init__(self, name, message, line):
         super().__init__(f"{name}: {message} (line {line})")
@@ -369,7 +376,7 @@ class BrokenPolicyGrammar(unittest.TestCase):
             '}\n'
             'path "sys/config/auditing/*" {\n'
             '  allowed_parameters = { "path" = ["a", "b"] }\n'
-            '  denied_parameters  = { "x" = [] "y" = "z" }\n'
+            '  denied_parameters  = { "x" = [], "y" = "z" }\n'
             '  required_parameters = ["path"]\n'
             '}\n'
             'path "sys/seal" { policy = "deny" }\n'

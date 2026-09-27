@@ -77,10 +77,17 @@ tool; nothing shared between folders except the license and this plan.
   one prefix, writer on one prefix, reader on one prefix, and the superuser
   carve-outs (`sys/audit*`, `sys/seal`, `sys/step-down` denied).
 - `policies/test_policies.py` — stdlib tokenizer + recursive-descent parser
-  for the policy grammar OpenBao's loader accepts (the `vault/policy.go`
-  rule-key set), plus the broken-policy fixtures that prove it rejects.
-  Every template must parse and must match its documented grant, so a
-  syntax error fails CI instead of surfacing at `bao policy write` time.
+  for the small HCL subset used by the templates, plus the broken-policy
+  fixtures that prove the subset rejects common editing mistakes. The rule
+  names follow the `vault/policy.go` set, but this is an approximation, not
+  OpenBao's loader. It currently accepts same-line object members without
+  commas, duplicate attributes, and boolean `required_parameters` items that
+  OpenBao 2.5 rejects; it rejects unquoted block labels that OpenBao accepts.
+  Every template must parse and must match its documented grant, but that
+  structural check does not guarantee that arbitrary policy text will pass
+  `bao policy write`. Run `bao policy fmt` on a disposable rendered copy and
+  use the target `bao policy write` as the authoritative validation before
+  applying a policy.
 - `install.sh` — idempotent copy to the conventional destinations: the hook
   to `~/.claude/hooks/credential-guard.py`, the wrapper to
   `~/.local/bin/bao-as`, and `~/.config/bao-as/instances.conf` seeded once
