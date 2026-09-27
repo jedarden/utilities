@@ -23,6 +23,7 @@ a real log.
 """
 import importlib.util
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import multiprocessing
@@ -443,6 +444,49 @@ class DenialLog(unittest.TestCase):
             invoke(deny_payload, state_home=sh)
         records = log_records(os.path.join(sh, "org-rule-guard", "denials.jsonl"))
         self.assertEqual(len(records), len(supported_cases()))
+
+    def test_concurrent_denials_append_complete_jsonl_records(self):
+        count = 32
+        state_home = tempfile.mkdtemp(prefix="org-rule-guard-concurrent-")
+        _CLEANUP.append(state_home)
+        env = dict(os.environ, XDG_STATE_HOME=state_home)
+        env.pop("ORG_RULE_GUARD_STATE_DIR", None)
+        payloads = [
+            bash(KUBECTL_DELETE, session="org-concurrent-" + str(index),
+                 cwd="/repo/concurrent")
+            for index in range(count)
+        ]
+        processes = [
+            subprocess.Popen(
+                [sys.executable, HOOK], stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            for _payload in payloads
+        ]
+
+        def finish(item):
+            process, payload = item
+            stdout, stderr = process.communicate(
+                input=json.dumps(payload).encode(), timeout=20)
+            return process.returncode, stdout, stderr
+
+        with ThreadPoolExecutor(max_workers=count) as pool:
+            results = list(pool.map(finish, zip(processes, payloads)))
+
+        for returncode, stdout, stderr in results:
+            self.assertEqual(returncode, 0, stderr.decode())
+            self.assertEqual(stderr, b"")
+            self.assertTrue(denied(json.loads(stdout.decode())))
+
+        log_path = os.path.join(state_home, "org-rule-guard", guard.LOG_NAME)
+        with open(log_path, "rb") as handle:
+            lines = handle.readlines()
+        self.assertEqual(len(lines), count)
+        self.assertTrue(all(line.endswith(b"\n") for line in lines))
+        records = [json.loads(line) for line in lines]
+        self.assertEqual(
+            {record["session_id"] for record in records},
+            {payload["session_id"] for payload in payloads},
+        )
 
     def test_rotation_keeps_active_and_backup_within_the_bound(self):
         sh = tempfile.mkdtemp(prefix="org-rule-guard-test-")

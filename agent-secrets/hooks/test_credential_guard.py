@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.environ.get("CREDENTIAL_GUARD_UNDER_TEST") or os.path.join(HERE, "credential-guard.py")
@@ -349,6 +350,53 @@ class HookProcess(unittest.TestCase):
                     for value in edit.values():
                         if isinstance(value, str):
                             self.assertNotIn(value, serialized)
+
+    def test_concurrent_denials_append_complete_jsonl_records(self):
+        count = 32
+        state_home = tempfile.mkdtemp(prefix="credential-guard-concurrent-")
+        config_home = tempfile.mkdtemp(prefix="credential-guard-concurrent-config-")
+        _CLEANUP.extend((state_home, config_home))
+        env = dict(os.environ,
+                   XDG_STATE_HOME=state_home,
+                   XDG_CONFIG_HOME=config_home)
+        payloads = [
+            {"tool_name": "Bash", "tool_input": {
+                "command": "printf '%s' '" + token("ghp_", 40, seed=index) + "'",
+            }, "cwd": "/repo/concurrent", "session_id":
+                "credential-concurrent-" + str(index)}
+            for index in range(count)
+        ]
+        processes = [
+            subprocess.Popen(
+                [sys.executable, HOOK], stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            for _payload in payloads
+        ]
+
+        def finish(item):
+            process, payload = item
+            stdout, stderr = process.communicate(
+                input=json.dumps(payload).encode(), timeout=20)
+            return process.returncode, stdout, stderr
+
+        with ThreadPoolExecutor(max_workers=count) as pool:
+            results = list(pool.map(finish, zip(processes, payloads)))
+
+        for returncode, stdout, stderr in results:
+            self.assertEqual(returncode, 0, stderr.decode())
+            self.assertEqual(stderr, b"")
+            self.assertTrue(denied(json.loads(stdout.decode())))
+
+        log_path = os.path.join(state_home, "credential-guard", guard.LOG_NAME)
+        with open(log_path, "rb") as handle:
+            lines = handle.readlines()
+        self.assertEqual(len(lines), count)
+        self.assertTrue(all(line.endswith(b"\n") for line in lines))
+        records = [json.loads(line) for line in lines]
+        self.assertEqual(
+            {record["session_id"] for record in records},
+            {payload["session_id"] for payload in payloads},
+        )
 
     def test_allow_writes_no_denial_record(self):
         state = tempfile.mkdtemp(prefix="credential-guard-allow-")
