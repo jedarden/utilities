@@ -37,6 +37,15 @@ sibling references. The current `org-rule-guard` bundle of
 `agent-secrets/hooks/credential-guard.py` is the concrete example; its
 standalone credential fallback remains available.
 
+The pin is a lockstep constraint, not historical metadata: it must equal the
+sibling's current `VERSION` at `HEAD`. The combined version gate runs this
+structural check, so a sibling release leaves the repository failing until the
+bundle pin is updated. Bump `bundled-dependencies.json` in the same push as the
+sibling release, or publish a dependent utility release that updates the pin;
+for the `org-rule-guard` bundle, that means updating its `agent-secrets` pin
+alongside the relevant `agent-secrets` release or in a subsequent
+`org-rule-guard` release.
+
 ## Version files, changelogs, and tags are a release contract
 
 Versioning belongs to each utility: `<utility>/VERSION` contains a semver

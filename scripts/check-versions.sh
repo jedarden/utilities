@@ -12,6 +12,8 @@
 #   - a `<utility>/v*` tag points at a commit where `<utility>/VERSION` is
 #     missing or disagrees with the tag's version (tagged before the bump,
 #     utility folder absent at the tag, ...);
+#   - a `bundled-dependencies.json` pin disagrees with its sibling's current
+#     `VERSION` (the structural gate below enforces this lockstep);
 #   - `*/v*` tags exist but no `*/VERSION` file does (utilities unversioned).
 #
 # Release flow that stays green: commit the VERSION bump, tag it, push commit

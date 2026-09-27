@@ -9,6 +9,7 @@ before checking the VERSION/tag contract.
     python3 -m unittest discover -s scripts -v
 """
 
+import json
 import os
 import shutil
 import stat
@@ -138,6 +139,43 @@ class VersionCheckerTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("2 utilities, VERSION files and tags agree", result.stdout)
+
+    def test_stale_bundle_pin_fails_the_combined_version_gate(self):
+        self.write_utility("alpha", "1.0.0")
+        self.write_utility("beta", "1.0.0")
+        beta = self.fixture / "beta"
+        source = beta / "hooks" / "credential.py"
+        source.parent.mkdir()
+        source.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        (self.fixture / "alpha" / "bundled-dependencies.json").write_text(
+            json.dumps({
+                "bundles": [{
+                    "utility": "beta",
+                    "version": "9.9.9",
+                    "source": "hooks/credential.py",
+                    "destination": "credential.py",
+                }]
+            }),
+            encoding="utf-8",
+        )
+        install = self.fixture / "alpha" / "install.sh"
+        install.write_text(
+            "#!/bin/sh\n"
+            'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
+            encoding="utf-8",
+        )
+
+        self.commit("add stale bundle pin")
+        self.tag("alpha/v1.0.0")
+        self.tag("beta/v1.0.0")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"pinned version '9.9.9' does not match {beta}/VERSION ('1.0.0')",
+            result.stderr,
+        )
 
     def test_readme_missing_utility_row_fails(self):
         self.write_utility("widget", "1.0.0")
