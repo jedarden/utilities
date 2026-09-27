@@ -48,6 +48,11 @@ backup therefore remains the pre-wiring settings file when another utility is
 wired later or this installer is run again. If the settings file does not yet
 exist, no backup is created because there is no prior file to preserve.
 
+If an existing settings file is malformed JSON, or its top-level value is not
+an object, `--wire` creates the pre-wiring `.bak` when it is owed, prints a
+clear refusal to stderr, exits nonzero, and leaves the settings file
+byte-for-byte unchanged. It never appends a hook entry to such a file.
+
 Python 3 and bash are the only dependencies; `bao-as` additionally needs the
 `bao` (or `vault`, via `BAO_AS_BIN=vault`) CLI.
 

@@ -86,10 +86,30 @@ if [ "$mode" = "--wire" ]; then
 import json, os, shutil, sys
 path, hook = sys.argv[1], sys.argv[2]
 cmd = f"python3 {hook}"
+
+def refuse_invalid_settings(reason):
+    backup = path + ".bak"
+    try:
+        if os.path.isfile(path) and not os.path.lexists(backup):
+            shutil.copy2(path, backup)
+            print(f"backup     {backup}")
+    except OSError as exc:
+        print(f"install.sh: refusing to wire {path}: {reason}; "
+              f"could not create backup {backup}: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"install.sh: refusing to wire {path}: {reason}; "
+          "settings file was not modified", file=sys.stderr)
+    raise SystemExit(1)
+
 s = {}
 if os.path.exists(path):
-    with open(path) as fh:
-        s = json.load(fh)
+    try:
+        with open(path) as fh:
+            s = json.load(fh)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        refuse_invalid_settings(f"invalid JSON ({exc})")
+    if not isinstance(s, dict):
+        refuse_invalid_settings("top-level value must be a JSON object")
 pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
 present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
 if not present:

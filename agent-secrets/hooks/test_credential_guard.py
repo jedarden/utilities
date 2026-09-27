@@ -589,6 +589,12 @@ class Install(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr.decode())
         return proc.stdout.decode()
 
+    def run_install_expect_failure(self, *args):
+        proc = subprocess.run(["bash", self.script, *args], capture_output=True,
+                              env=self.env, timeout=30)
+        self.assertNotEqual(proc.returncode, 0, proc.stdout.decode())
+        return proc
+
     def hook_dst(self):
         return os.path.join(self.hooks_dir, "credential-guard.py")
 
@@ -706,6 +712,31 @@ class Install(unittest.TestCase):
         self.assertIn("backup", out)
         with open(self.settings + ".bak", "rb") as fh:
             self.assertEqual(fh.read(), original)
+
+    def assert_malformed_settings_is_untouched(self, original):
+        with open(self.settings, "wb") as fh:
+            fh.write(original)
+
+        proc = self.run_install_expect_failure("--wire")
+
+        message = proc.stderr.decode()
+        self.assertIn("refusing to wire", message)
+        self.assertIn("settings file was not modified", message)
+        with open(self.settings, "rb") as fh:
+            self.assertEqual(fh.read(), original)
+        with open(self.settings + ".bak", "rb") as fh:
+            self.assertEqual(fh.read(), original)
+
+    def test_wire_refuses_a_truncated_settings_file(self):
+        self.assert_malformed_settings_is_untouched(
+            b'{"model": "opus", "hooks": '
+        )
+
+    def test_wire_refuses_settings_with_a_trailing_comma(self):
+        self.assert_malformed_settings_is_untouched(b'{"model": "opus",}\n')
+
+    def test_wire_refuses_a_non_object_settings_root(self):
+        self.assert_malformed_settings_is_untouched(b"[]\n")
 
     def test_wire_preserves_an_existing_settings_backup_on_reruns(self):
         original = b'{"model": "opus"}\n'

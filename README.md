@@ -59,6 +59,11 @@ concatenate the two JSON objects; doing so can discard unrelated settings and
 hooks. If a non-default settings path is used, pass that same path through
 `CLAUDE_SETTINGS` on every run.
 
+If an existing settings file is malformed JSON, or its top-level value is not
+an object, either installer creates the pre-wiring `.bak` when it is owed,
+prints a clear refusal to stderr, exits nonzero, and leaves the settings file
+byte-for-byte unchanged. It never appends a hook entry to such a file.
+
 ## Structure
 
 - `<utility>/` — one folder per tool, each self-contained
