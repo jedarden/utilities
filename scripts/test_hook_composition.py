@@ -9,6 +9,7 @@ credential coverage.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,18 @@ def write_payload(content, path="notes.txt"):
     return {
         "tool_name": "Write",
         "tool_input": {"file_path": path, "content": content},
+        "session_id": "composition-test",
+        "cwd": str(ROOT),
+    }
+
+
+def multiedit_payload(content, path="notes.txt"):
+    return {
+        "tool_name": "MultiEdit",
+        "tool_input": {
+            "file_path": path,
+            "edits": [{"old_string": "placeholder", "new_string": content}],
+        },
         "session_id": "composition-test",
         "cwd": str(ROOT),
     }
@@ -77,8 +90,44 @@ class HookComposition(unittest.TestCase):
             "python3 ~/.claude/hooks/org-rule-guard.py",
             "python3 ~/.claude/hooks/credential-guard.py",
         ])
-        self.assertEqual(entries[0]["matcher"], "Write|Edit|Bash")
+        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|Bash")
         self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|Bash")
+
+    def test_shipped_matchers_cover_every_tool_class_the_hooks_inspect(self):
+        with COMBINED_SETTINGS.open(encoding="utf-8") as handle:
+            entries = json.load(handle)["hooks"]["PreToolUse"]
+
+        inspected_tools = {
+            "python3 ~/.claude/hooks/org-rule-guard.py":
+                {"Write", "Edit", "MultiEdit", "Bash"},
+            "python3 ~/.claude/hooks/credential-guard.py":
+                {"Write", "Edit", "MultiEdit", "Bash"},
+        }
+        for entry in entries:
+            command = entry["hooks"][0]["command"]
+            with self.subTest(command=command):
+                self.assertIn(command, inspected_tools)
+                missing = {
+                    tool for tool in inspected_tools[command]
+                    if re.fullmatch(entry["matcher"], tool) is None
+                }
+                self.assertEqual(missing, set(),
+                                 "matcher omits inspected tool classes")
+
+    def test_org_guard_inspects_multiedit_file_rules(self):
+        cases = (
+            ("workflow", ".github/workflows/ci.yml", "name: build\non: push\n"),
+            ("job", "k8s/batch.yaml", "apiVersion: batch/v1\nkind: Job\n"),
+            ("latest", "k8s/deploy.yaml", "image: example/app:latest\n"),
+        )
+        for name, path, content in cases:
+            with self.subTest(rule=name), tempfile.TemporaryDirectory(
+                prefix="hook-composition-"
+            ) as directory:
+                result = run_hook(
+                    ORG_HOOK, multiedit_payload(content, path), Path(directory)
+                )
+                self.assertTrue(denied(result))
 
     def test_both_hooks_deny_one_credential_without_a_runtime_dependency(self):
         payload = write_payload("stored value: " + token(seed=3))

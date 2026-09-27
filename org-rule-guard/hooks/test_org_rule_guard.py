@@ -579,7 +579,7 @@ class Install(unittest.TestCase):
             s = json.load(fh)
         entries = s["hooks"]["PreToolUse"]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["matcher"], "Write|Edit|Bash")
+        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.dst())
 
@@ -619,7 +619,7 @@ class Install(unittest.TestCase):
             entries = json.load(fh)["hooks"]["PreToolUse"]
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0]["matcher"], "WebFetch")
-        self.assertEqual(entries[1]["matcher"], "Write|Edit|Bash")
+        self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|Bash")
 
     def test_uninstall_removes_the_hook_and_leaves_settings(self):
         self.run_install("--wire")

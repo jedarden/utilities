@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse guard: blocks Write/Edit/Bash calls that violate hard org rules.
+"""PreToolUse guard: blocks Write/Edit/MultiEdit/Bash calls that violate hard org rules.
 
 FAILS OPEN by design. Any unexpected input, parse failure, or internal error
 exits 0 (allow). A NEEDLE fleet must never be wedged by this hook — a missed
 violation is recoverable, a stuck fleet is not.
 
-Write/Edit rules:
+Write/Edit/MultiEdit rules:
   1. no .github/workflows/*            (GitHub Actions are disabled org-wide)
   2. no `kind: Job` / `kind: CronJob`  (ArgoCD cannot prune their pods)
   3. no `image: ...:latest`            (breaks rollback)
@@ -459,6 +459,28 @@ def check_write(path, body):
              latest.group(0))
 
 
+def check_file_tool(tool, tool_input):
+    """Inspect the file contents carried by Write, Edit, or MultiEdit."""
+    path = tool_input.get("file_path") or ""
+    if not path:
+        return
+    if tool == "MultiEdit":
+        edits = tool_input.get("edits") or []
+        bodies = [
+            edit.get("new_string")
+            for edit in edits
+            if isinstance(edit, dict) and isinstance(edit.get("new_string"), str)
+        ]
+        # Check once even when edits is empty so path-only rules still apply.
+        check_write(path, "\n".join(bodies))
+        return
+    body = "\n".join(
+        value for value in (tool_input.get("content"), tool_input.get("new_string"))
+        if value
+    )
+    check_write(path, body)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -475,11 +497,7 @@ def main():
         if tool == "Bash":
             check_bash(ti.get("command") or "")
         else:
-            path = ti.get("file_path") or ""
-            if not path:
-                return ALLOW
-            body = "\n".join(x for x in (ti.get("content"), ti.get("new_string")) if x)
-            check_write(path, body)
+            check_file_tool(tool, ti)
     except SystemExit:
         raise
     except Exception:

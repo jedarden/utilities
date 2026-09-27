@@ -97,7 +97,7 @@ if os.path.exists(path):
 pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
 present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
 if not present:
-    pre.append({"matcher": "Write|Edit|Bash",
+    pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
                 "hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:

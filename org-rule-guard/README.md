@@ -33,11 +33,11 @@ Git protections.
 
 | Rule | Slug(s) | Scope | What it stops |
 |---|---|---|---|
-| [1](hooks/org-rule-guard.py#L434) | [`github-actions-workflow`](hooks/org-rule-guard.py#L57) | any write to `.github/workflows/*` | GitHub Actions, disabled org-wide; CI runs on Argo Workflows in `iad-ci` |
-| [2](hooks/org-rule-guard.py#L444) | [`k8s-job-cronjob`](hooks/org-rule-guard.py#L58) | `.yaml`/`.yml` only | `kind: Job` and `kind: CronJob`, which ArgoCD cannot prune |
-| [3](hooks/org-rule-guard.py#L453) | [`latest-image-tag`](hooks/org-rule-guard.py#L59) | `.yaml`/`.yml` only | `image: …:latest`, which breaks rollback |
+| [1](hooks/org-rule-guard.py#L434) | [`github-actions-workflow`](hooks/org-rule-guard.py#L57) | any Write/Edit/MultiEdit write to `.github/workflows/*` | GitHub Actions, disabled org-wide; CI runs on Argo Workflows in `iad-ci` |
+| [2](hooks/org-rule-guard.py#L444) | [`k8s-job-cronjob`](hooks/org-rule-guard.py#L58) | Write/Edit/MultiEdit of `.yaml`/`.yml` only | `kind: Job` and `kind: CronJob`, which ArgoCD cannot prune |
+| [3](hooks/org-rule-guard.py#L453) | [`latest-image-tag`](hooks/org-rule-guard.py#L59) | Write/Edit/MultiEdit of `.yaml`/`.yml` only | `image: …:latest`, which breaks rollback |
 | [4](hooks/org-rule-guard.py#L325) | [`mutating-kubectl`](hooks/org-rule-guard.py#L60) | Bash | `kubectl apply/delete/patch/scale/…`; read-only verbs, `exec`, `cp`, `logs` and Argo Workflow submission stay allowed |
-| [5](hooks/org-rule-guard.py#L405) | [`credential-value`](hooks/org-rule-guard.py#L61) | **every** file type, and Bash | a credential *value*; secrets travel by reference |
+| [5](hooks/org-rule-guard.py#L405) | [`credential-value`](hooks/org-rule-guard.py#L61) | **every** Write/Edit/MultiEdit file type, and Bash | a credential *value*; secrets travel by reference |
 | [6](hooks/org-rule-guard.py#L221) | [`git-add-all`](hooks/org-rule-guard.py#L62), [`git-commit-all`](hooks/org-rule-guard.py#L63), [`git-commit-no-pathspec`](hooks/org-rule-guard.py#L64) | Bash | blanket `git add -A`/`.`/`--all`, `git commit -a`, and bare `git commit -m`, which sweep in a sibling worker's staged files |
 
 Rule 6 has three slugs because blanket staging and the two commit failure
@@ -47,7 +47,7 @@ Rules 2–3 match real manifest lines only, never comments, so a document that
 
 ## PreToolUse behavior
 
-Claude Code invokes the hook for `Write`, `Edit`, and `Bash` through the
+Claude Code invokes the hook for `Write`, `Edit`, `MultiEdit`, and `Bash` through the
 `PreToolUse` matcher shown in the [settings example](examples/settings.json).
 The hook reads one JSON payload from stdin and handles one tool call per
 process. The first matching rule denies the call and writes one JSON object to
@@ -86,7 +86,7 @@ settings.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash",
+        "matcher": "Write|Edit|MultiEdit|Bash",
         "hooks": [
           {
             "type": "command",
@@ -107,7 +107,7 @@ changing settings; it still stages the bundle when it installs.
 ### Composed execution
 
 The combined configuration has two independent `PreToolUse` entries: the org
-guard matches `Write|Edit|Bash`, and the optional credential guard matches
+guard matches `Write|Edit|MultiEdit|Bash`, and the optional credential guard matches
 `Write|Edit|MultiEdit|Bash`. Claude Code runs all matching hook handlers in
 parallel, so the order of entries in `settings.json` is for readability only,
 not an execution-order guarantee. Both handlers receive the same payload.

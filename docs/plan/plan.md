@@ -97,8 +97,10 @@ tool; nothing shared between folders except the license and this plan.
 - `hooks/org-rule-guard.py` — the org-wide PreToolUse guard, ported from
   `~/.claude/hooks/org-rule-guard.py`: no GitHub Actions workflows, no
   `kind: Job`/`CronJob`, no `:latest`, no mutating `kubectl`, no credential
-  values, no blanket `git commit`. Same six rules, same deny messages, same
-  fail-open contract as the live hook. Every denial additionally appends one
+  values, no blanket `git commit`. Its file-content rules inspect Write, Edit,
+  and MultiEdit calls; its shell rules inspect Bash calls, and the shipped
+  matcher covers all four tool classes. Same six rules, same deny messages,
+  same fail-open contract as the live hook. Every denial additionally appends one
   JSON line (`ts`, `rule_id`, `tool`, `cwd`, `session_id`, redacted 80-char
   fragment) to `${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl`.
   The credential rule logs its pattern name, never a value, and every other
