@@ -22,7 +22,12 @@ tool; nothing shared between folders except the license and this plan.
   while rejecting every undeclared sibling reference. This is the mechanism
   Phase 3(b) must use if it reuses `agent-secrets`' credential guard; a direct
   import or subprocess delegation to the checkout is not sanctioned.
-- Scripts are POSIX shell or Python 3 stdlib. No package installs.
+- Scripts are POSIX shell or Python 3 stdlib. No package installs. The
+  stdlib-only `scripts/check-structure.py` gate enforces this for utility-owned
+  runtime files: it requires POSIX `sh` shebangs, rejects package-manager
+  install commands and absolute Python imports outside the stdlib or the same
+  utility, and rejects undeclared sibling runtime references. `scripts/` and
+  `docs/` remain repository tooling/documentation rather than utility runtime.
 - Each `install.sh` is idempotent and copies into the conventional user
   locations (`~/.claude/hooks/`, `~/.local/bin/`); it never edits a file it
   did not create unless asked with an explicit flag.
@@ -35,9 +40,11 @@ tool; nothing shared between folders except the license and this plan.
   since pushing the commit alone fails CI until the tag lands.
 - The leaf contract is enforced by `scripts/check-structure.py`, which is
   invoked by that same CI gate before the version/tag check. Every top-level
-  utility must own `README.md`, `VERSION`, and `install.sh`; symlinks and
-  runtime references into a sibling utility are rejected, and the README
-  Folder table must match the top-level utility folders in both directions.
+  utility must own `README.md`, `VERSION`, and `install.sh`; symlinks, non-
+  POSIX shell shebangs, package-manager install commands, non-stdlib Python
+  imports, and undeclared runtime references into a sibling utility are
+  rejected. The README Folder table must match the top-level utility folders
+  in both directions.
 
 ## Components
 

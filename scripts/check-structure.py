@@ -3,13 +3,15 @@
 
 Top-level directories other than the repository-tooling directories are
 utilities.  Each utility owns the small amount of metadata needed to install
-it, and its runtime files must not reach into a sibling utility.  This check
-is deliberately stdlib-only so it can run in the same minimal CI image as the
+it, and its runtime files must use POSIX shell or Python's standard library
+without installing packages or reaching into a sibling utility.  This check is
+deliberately stdlib-only so it can run in the same minimal CI image as the
 other repository checks.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import stat
@@ -38,6 +40,36 @@ TEXT_SUFFIXES = {
     ".yml",
     ".zsh",
 }
+SHELL_SUFFIXES = {".bash", ".dash", ".ksh", ".sh", ".zsh"}
+PYTHON_SHEBANG = re.compile(
+    r"^#!\s*(?:(?:/usr/bin/env\s+)?|/usr/bin/)?python(?:[0-9.]*)?(?:\s|$)"
+)
+POSIX_SHELL_SHEBANG = re.compile(
+    r"^#!\s*(?:/usr/bin/env\s+)?(?:sh|/bin/sh|/usr/bin/sh)(?:\s|$)"
+)
+PACKAGE_INSTALL_PATTERNS = (
+    ("pip", re.compile(r"\b(?:python(?:3(?:\.[0-9]+)?)?\s+-m\s+)?pip3?\s+install\b")),
+    ("uv", re.compile(r"\buv\s+(?:pip\s+)?install\b")),
+    ("pipx", re.compile(r"\bpipx\s+install\b")),
+    ("poetry", re.compile(r"\bpoetry\s+(?:add|install)\b")),
+    ("npm", re.compile(r"\bnpm\s+(?:i|install|ci)\b")),
+    ("yarn", re.compile(r"\byarn\s+(?:add|install)\b")),
+    ("pnpm", re.compile(r"\bpnpm\s+(?:add|install|i)\b")),
+    ("apt", re.compile(r"\bapt(?:-get)?\s+(?:[^;&|\n]*\s+)?(?:install|upgrade)\b")),
+    ("apk", re.compile(r"\bapk\s+(?:add|upgrade)\b")),
+    ("dnf/yum", re.compile(r"\b(?:dnf|yum)\s+(?:[^;&|\n]*\s+)?(?:install|upgrade)\b")),
+    ("Homebrew", re.compile(r"\bbrew\s+install\b")),
+    ("pacman", re.compile(r"\bpacman\s+(?:[^;&|\n]*\s+)?-S(?:\s|$)")),
+    ("zypper", re.compile(r"\bzypper\s+install\b")),
+    ("gem", re.compile(r"\bgem\s+install\b")),
+    ("cargo", re.compile(r"\bcargo\s+install\b")),
+    ("go", re.compile(r"\bgo\s+install\b")),
+)
+STDLIB_MODULES = (
+    set(getattr(sys, "stdlib_module_names", ()))
+    | set(sys.builtin_module_names)
+    | {"__future__"}
+)
 README_TABLE_HEADER = re.compile(r"^\s*\|\s*Folder\s*\|")
 README_TABLE_SEPARATOR = re.compile(r"^\s*:?-{3,}:?\s*$")
 README_FOLDER_LINK = re.compile(r"^\[([^]]+)\]\(([^)]+)\)$")
@@ -94,6 +126,120 @@ def runtime_files(utility: Path):
             continue
         if path.suffix.lower() in TEXT_SUFFIXES or mode & stat.S_IXUSR:
             yield path
+
+
+def utility_script_files(utility: Path):
+    """Yield utility scripts, including the required install-time script."""
+
+    install = utility / "install.sh"
+    if install.is_file() and not install.is_symlink():
+        yield install
+    yield from runtime_files(utility)
+
+
+def _read_first_line(path: Path) -> str:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return handle.readline().rstrip("\n")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def is_shell_file(path: Path) -> bool:
+    """Return whether a utility file is a shell script."""
+
+    return path.suffix.lower() in SHELL_SUFFIXES or bool(
+        re.match(r"^#!.*(?:/|\s)(?:ba|z|k|d)?sh(?:\s|$)", _read_first_line(path))
+    )
+
+
+def is_python_file(path: Path) -> bool:
+    """Return whether a utility file is a Python source file."""
+
+    return path.suffix.lower() == ".py" or bool(PYTHON_SHEBANG.match(_read_first_line(path)))
+
+
+def shell_constraint_errors(utility: Path) -> list[str]:
+    """Require utility shell scripts to declare the portable POSIX shell."""
+
+    errors = []
+    for path in utility_script_files(utility):
+        if not is_shell_file(path):
+            continue
+        shebang = _read_first_line(path)
+        if not POSIX_SHELL_SHEBANG.match(shebang):
+            errors.append(
+                f"{path}: shell script must use a POSIX sh shebang, not {shebang!r}"
+            )
+    return errors
+
+
+def package_install_errors(utility: Path) -> list[str]:
+    """Reject package-manager installation commands in utility runtime files."""
+
+    errors = []
+    for path in utility_script_files(utility):
+        if not is_shell_file(path):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line_number, line in enumerate(lines, 1):
+            if line.lstrip().startswith("#"):
+                continue
+            for manager, pattern in PACKAGE_INSTALL_PATTERNS:
+                if pattern.search(line):
+                    errors.append(
+                        f"{path}:{line_number}: package-manager command {manager!r} "
+                        "must not install runtime dependencies"
+                    )
+    return errors
+
+
+def _local_python_modules(utility: Path) -> set[str]:
+    names = set()
+    for path in runtime_files(utility):
+        if not is_python_file(path):
+            continue
+        if path.name == "__init__.py":
+            names.add(path.parent.name)
+        else:
+            names.add(path.stem)
+    return names
+
+
+def python_dependency_errors(utility: Path) -> list[str]:
+    """Reject absolute Python imports outside the stdlib or this utility."""
+
+    errors = []
+    local_modules = _local_python_modules(utility)
+    for path in runtime_files(utility):
+        if not is_python_file(path):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, UnicodeDecodeError):
+            continue
+        except SyntaxError as error:
+            errors.append(f"{path}:{error.lineno}: invalid Python syntax ({error.msg})")
+            continue
+
+        imports = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.extend((alias.name, node.lineno) for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imports.append((node.module, node.lineno))
+
+        for module, line_number in imports:
+            root = module.split(".", 1)[0]
+            if root in STDLIB_MODULES or root in local_modules:
+                continue
+            errors.append(
+                f"{path}:{line_number}: non-stdlib Python import {root!r}"
+            )
+    return errors
 
 
 def dependency_patterns(other: str) -> tuple[re.Pattern[str], ...]:
@@ -391,6 +537,9 @@ def main() -> int:
     for utility in candidates:
         if utility.is_symlink():
             continue
+        errors.extend(shell_constraint_errors(utility))
+        errors.extend(package_install_errors(utility))
+        errors.extend(python_dependency_errors(utility))
         errors.extend(dependency_errors(utility, candidates))
         errors.extend(
             install_time_dependency_errors(
@@ -411,8 +560,8 @@ def main() -> int:
     print(
         "check-structure: "
         f"{len(candidates)} utilities have README.md, VERSION, install.sh "
-        "and no undeclared cross-utility runtime dependencies; README Folder "
-        "table agrees"
+        "and pass the POSIX-shell, Python-stdlib, package-install, and "
+        "cross-utility checks; README Folder table agrees"
     )
     return 0
 

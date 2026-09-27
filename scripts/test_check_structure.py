@@ -39,7 +39,7 @@ class StructureCheckerTests(unittest.TestCase):
         (utility / "README.md").write_text(f"# {name}\n", encoding="utf-8")
         (utility / "VERSION").write_text("1.0.0\n", encoding="utf-8")
         install = utility / "install.sh"
-        install.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        install.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         install.chmod(install.stat().st_mode | stat.S_IXUSR)
         return utility
 
@@ -77,6 +77,62 @@ class StructureCheckerTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("1 utilities have README.md, VERSION, install.sh", result.stdout)
+
+    def test_non_posix_shell_shebang_fails(self):
+        utility = self.write_utility("alpha")
+        install = utility / "install.sh"
+        install.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("shell script must use a POSIX sh shebang", result.stderr)
+
+    def test_package_manager_install_fails(self):
+        utility = self.write_utility("alpha")
+        install = utility / "install.sh"
+        install.write_text(
+            "#!/bin/sh\n"
+            "python3 -m pip install requests\n",
+            encoding="utf-8",
+        )
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"{install}:2: package-manager command 'pip'",
+            result.stderr,
+        )
+
+    def test_non_stdlib_python_import_fails(self):
+        utility = self.write_utility("alpha")
+        runtime_file = utility / "hooks" / "hook.py"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text("import requests\n", encoding="utf-8")
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"{runtime_file}:1: non-stdlib Python import 'requests'",
+            result.stderr,
+        )
+
+    def test_import_from_same_utility_passes(self):
+        utility = self.write_utility("alpha")
+        (utility / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
+        runtime_file = utility / "hooks" / "hook.py"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text("from helper import VALUE\n", encoding="utf-8")
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_required_file_fails_with_file_named(self):
         for missing in ("README.md", "VERSION", "install.sh"):
@@ -129,7 +185,7 @@ class StructureCheckerTests(unittest.TestCase):
         outside = Path(tempfile.mkdtemp(prefix="check-structure-target-"))
         self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
         target = outside / "shared.sh"
-        target.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        target.write_text("#!/bin/sh\n", encoding="utf-8")
         link = utility / "shared.sh"
         link.symlink_to(target)
         self.write_readme()
@@ -148,6 +204,22 @@ class StructureCheckerTests(unittest.TestCase):
             "subprocess.run(['../beta/install.sh'], check=True)\n",
             encoding="utf-8",
         )
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"{runtime_file}:1: runtime reference to sibling utility 'beta'",
+            result.stderr,
+        )
+
+    def test_python_import_of_sibling_fails(self):
+        alpha = self.write_utility("alpha")
+        self.write_utility("beta")
+        runtime_file = alpha / "bin" / "use-beta.py"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text("from beta import helper\n", encoding="utf-8")
         self.write_readme()
 
         result = self.run_checker()
@@ -177,7 +249,7 @@ class StructureCheckerTests(unittest.TestCase):
         )
         install = alpha / "install.sh"
         install.write_text(
-            "#!/usr/bin/env bash\n"
+            "#!/bin/sh\n"
             'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
             encoding="utf-8",
         )
@@ -193,7 +265,7 @@ class StructureCheckerTests(unittest.TestCase):
         self.write_utility("beta")
         install = alpha / "install.sh"
         install.write_text(
-            "#!/usr/bin/env bash\n"
+            "#!/bin/sh\n"
             'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
             encoding="utf-8",
         )
@@ -228,7 +300,7 @@ class StructureCheckerTests(unittest.TestCase):
         )
         install = alpha / "install.sh"
         install.write_text(
-            "#!/usr/bin/env bash\n"
+            "#!/bin/sh\n"
             'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
             encoding="utf-8",
         )
@@ -268,7 +340,7 @@ class StructureCheckerTests(unittest.TestCase):
         )
         install = alpha / "install.sh"
         install.write_text(
-            "#!/usr/bin/env bash\n"
+            "#!/bin/sh\n"
             'install -m 755 "$HERE/../beta/hooks/credential.py" "$DEST"\n',
             encoding="utf-8",
         )

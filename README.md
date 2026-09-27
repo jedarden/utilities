@@ -26,15 +26,27 @@ git clone https://git.ardenone.com/jedarden/utilities.git ~/utilities
 
 - `<utility>/` — one folder per tool, each self-contained
 - `scripts/` — repo tooling, not a utility: `check-structure.py` verifies each
-  utility owns its `README.md`, `VERSION`, and `install.sh`, rejects undeclared
-  cross-utility runtime references, validates the narrow pinned bundle
-  exception, and keeps this table's Folder column in sync with the top-level
-  utility folders; `check-versions.sh` runs that check and verifies each
-  `<utility>/VERSION` has a matching `<utility>/vX.Y.Z` tag (CI runs the
-  combined gate on every push)
+  utility owns its `README.md`, `VERSION`, and `install.sh`, requires POSIX
+  `sh` shebangs, rejects package-manager install commands and non-stdlib
+  Python imports, rejects undeclared cross-utility runtime references,
+  validates the narrow pinned bundle exception, and keeps this table's Folder
+  column in sync with the top-level utility folders; `check-versions.sh` runs
+  that check and verifies each `<utility>/VERSION` has a matching
+  `<utility>/vX.Y.Z` tag (CI runs the combined gate on every push)
 - `docs/notes/` — features, constraints, design decisions
 - `docs/research/` — external reference material and prior art
 - `docs/plan/plan.md` — complete plan for the repo
+
+## Runtime constraints
+
+The structural gate scans utility-owned runtime files. Shell scripts must
+declare POSIX `sh` and may not install packages with pip, npm, apt, or another
+package manager. Python files are parsed with the standard-library `ast`
+module; absolute imports must resolve to Python's standard library or to code
+inside the same utility. Runtime paths or imports into a sibling utility are
+also rejected. Repository tooling under `scripts/` and documentation under
+`docs/` are exempt; the declared pinned bundle remains install-time source
+copying, not a runtime dependency.
 
 ## License
 

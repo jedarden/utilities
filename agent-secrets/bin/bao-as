@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # bao-as <instance> <command...>
 #
 # Log in to one named OpenBao/Vault instance with an AppRole and run <command>
@@ -20,7 +20,7 @@
 #   bao-as prod bao kv metadata get secret/app/db
 #   openssl rand -base64 32 | bao-as prod bao kv put -cas=3 secret/app/db password=-
 #   bao-as --list
-set -euo pipefail
+set -eu
 umask 077
 
 CONF_DIR="${BAO_AS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bao-as}"
