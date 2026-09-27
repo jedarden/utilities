@@ -82,6 +82,13 @@ uses the same lock. The lock covers reading, merging, backup creation, and
 replacement. Each changed file is written to a uniquely named temporary file
 in the settings file's directory, flushed, and atomically renamed into place;
 an interruption before the rename therefore leaves the live file complete.
+The temporary name includes the utility (`.settings.json.agent-secrets.*.tmp`
+or `.settings.json.org-rule-guard.*.tmp`). Each installer removes its own
+leftover temporary files while holding the lock before reading the settings;
+the other utility's temporary files are left for that utility to reap. Normal
+errors and HUP/INT/TERM interruptions remove the installer's current temporary
+file too. A hard kill can still strand a file, but the next run removes it
+before merging.
 When rewriting an existing file, the replacement keeps the live file's
 permission bits, including mode `0600`. If both installers are started at the
 same time, one waits for the other and then rereads its result, so both hook

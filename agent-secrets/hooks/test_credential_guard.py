@@ -19,11 +19,13 @@ import inspect
 import json
 import os
 import re
+import signal
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
@@ -652,6 +654,12 @@ time.sleep(60)
         with open(path) as fh:
             return fh.read()
 
+    def settings_temp_files(self, settings, utility):
+        directory = os.path.dirname(settings)
+        prefix = ".%s.%s." % (os.path.basename(settings), utility)
+        return [name for name in os.listdir(directory)
+                if name.startswith(prefix) and name.endswith(".tmp")]
+
     def test_first_install_copies_everything_and_leaves_settings_alone(self):
         out = self.run_install()
         for path in (self.hook_dst(), self.bin_dst(), self.conf()):
@@ -970,6 +978,67 @@ time.sleep(60)
         leftovers = [name for name in os.listdir(os.path.dirname(self.settings))
                      if name.startswith(".settings.json.") and name.endswith(".tmp")]
         self.assertEqual(leftovers, [], out)
+
+    def test_interrupted_wire_preserves_live_settings_and_next_run_reaps_temp(self):
+        org_script = os.path.join(HERE, os.pardir, os.pardir,
+                                  "org-rule-guard", "install.sh")
+        specs = (
+            ("agent-secrets", self.script, self.env),
+            ("org-rule-guard", org_script, dict(self.env)),
+        )
+        for utility, script, base_env in specs:
+            with self.subTest(utility=utility):
+                settings = os.path.join(self.root, utility, "settings.json")
+                os.makedirs(os.path.dirname(settings))
+                original = json.dumps(
+                    {"model": "opus", "padding": "x" * (64 * 1024 * 1024)},
+                    indent=2,
+                ).encode() + b"\n"
+                with open(settings, "wb") as fh:
+                    fh.write(original)
+                env = dict(base_env, CLAUDE_SETTINGS=settings)
+                process = subprocess.Popen(
+                    ["bash", script, "--wire"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    start_new_session=True,
+                )
+                interrupted = False
+                try:
+                    deadline = time.monotonic() + 20
+                    while time.monotonic() < deadline:
+                        if self.settings_temp_files(settings, utility):
+                            interrupted = True
+                            os.killpg(process.pid, signal.SIGKILL)
+                            break
+                        if process.poll() is not None:
+                            break
+                        time.sleep(0.001)
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    stdout, stderr = process.communicate(timeout=10)
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                self.assertTrue(interrupted, stdout.decode() + stderr.decode())
+                with open(settings, "rb") as fh:
+                    self.assertEqual(fh.read(), original)
+                self.assertTrue(self.settings_temp_files(settings, utility))
+
+                result = subprocess.run(
+                    ["bash", script, "--wire"],
+                    capture_output=True,
+                    env=env,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                with open(settings) as fh:
+                    completed = json.load(fh)
+                self.assertEqual(completed["model"], "opus")
+                self.assertEqual(len(completed["padding"]), 64 * 1024 * 1024)
+                self.assertEqual(self.settings_temp_files(settings, utility), [])
 
     def test_wire_preserves_live_settings_permissions(self):
         with open(self.settings, "w") as fh:

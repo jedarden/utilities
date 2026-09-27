@@ -157,9 +157,11 @@ echo "instances  $CONF_DIR/instances.conf  (edit; put role_id/secret_id under $C
 
 if [ "$wire" -eq 1 ]; then
   python3 - "$SETTINGS" "$HOOK_DST" "$force" <<'PY'
-import fcntl
+import atexit
 import errno
+import fcntl
 import json
+import signal
 import math
 import os
 import shutil
@@ -177,6 +179,27 @@ matcher = "Write|Edit|MultiEdit|Bash"
 lock_path = path + ".lock"
 settings_dir = os.path.dirname(os.path.abspath(path))
 settings_name = os.path.basename(path)
+temp_prefix = f".{settings_name}.agent-secrets."
+temp_path = None
+
+def cleanup_temp():
+    global temp_path
+    if temp_path is None:
+        return
+    try:
+        os.unlink(temp_path)
+    except FileNotFoundError:
+        pass
+    finally:
+        temp_path = None
+
+def handle_interrupt(signum, _frame):
+    cleanup_temp()
+    raise SystemExit(128 + signum)
+
+for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(signum, handle_interrupt)
+atexit.register(cleanup_temp)
 
 if not os.path.isdir(settings_dir):
     print(f"install.sh: refusing to wire {requested_path}: settings parent "
@@ -255,8 +278,39 @@ def refuse_invalid_settings(reason):
           "settings file was not modified", file=sys.stderr)
     raise SystemExit(1)
 
+def reap_stale_temps():
+    for name in os.listdir(settings_dir):
+        if not (name.startswith(temp_prefix) and name.endswith(".tmp")):
+            continue
+        try:
+            os.unlink(os.path.join(settings_dir, name))
+        except (FileNotFoundError, IsADirectoryError):
+            pass
+
+def write_settings(s, source_mode):
+    global temp_path
+    fd, temp_path = tempfile.mkstemp(
+        prefix=temp_prefix, suffix=".tmp", dir=settings_dir
+    )
+    try:
+        if source_mode is not None:
+            os.fchmod(fd, source_mode)
+        with os.fdopen(fd, "w") as fh:
+            fd = None
+            json.dump(s, fh, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temp_path, path)
+        temp_path = None
+    finally:
+        if fd is not None:
+            os.close(fd)
+        cleanup_temp()
+
 lock_fd = acquire_settings_lock()
 try:
+    reap_stale_temps()
     s = {}
     source_mode = None
     if os.path.exists(path):
@@ -298,28 +352,7 @@ try:
             pre.append({"matcher": matcher,
                         "hooks": [{"type": "command", "command": cmd}]})
             print(f"wired      {requested_path}")
-        fd, tmp = tempfile.mkstemp(
-            prefix=f".{settings_name}.", suffix=".tmp", dir=settings_dir
-        )
-        try:
-            if source_mode is not None:
-                os.fchmod(fd, source_mode)
-            with os.fdopen(fd, "w") as fh:
-                fd = None
-                json.dump(s, fh, indent=2)
-                fh.write("\n")
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, path)
-            tmp = None
-        finally:
-            if fd is not None:
-                os.close(fd)
-            if tmp is not None:
-                try:
-                    os.unlink(tmp)
-                except FileNotFoundError:
-                    pass
+        write_settings(s, source_mode)
 finally:
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)

@@ -52,7 +52,11 @@ concurrent `--wire` runs use the same lock. The lock covers reading, merging,
 backup creation, and replacement. Each changed file is written to a uniquely
 named temporary file in the settings file's directory, flushed, and
 atomically renamed into place; an interruption before the rename leaves the
-live file complete. Rewriting an existing file preserves its permission bits,
+live file complete. The temporary name includes `agent-secrets`, and each run
+reaps only its own leftover `.tmp` files while holding the lock. Normal errors
+and HUP/INT/TERM interruptions remove the current temporary file; a hard kill
+can leave one for the next `--wire` run to reap. Rewriting an existing file
+preserves its permission bits,
 including mode `0600`. If the two utility installers run concurrently, the
 second waits and rereads the first result, preserving both hook entries and
 unrelated settings. Manual writers that do not honor the same advisory lock
