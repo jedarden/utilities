@@ -178,19 +178,86 @@ chmod 600 ~/.config/bao-as/prod/*
 
 ## Policies
 
-`PREFIX` in each file is the path this identity owns. Replace it, then
-`bao policy write <name> <file>`.
+Choose the narrowest policy that matches the identity. Capabilities from all
+policies attached to a token are combined, so do not attach multiple
+prefix-level policies unless that union is intentional.
 
-- `agent-prefix.hcl` — the interactive agent: create/read/update/delete on
-  its prefix, plus metadata read (for `current_version`) and metadata delete.
-- `writer-prefix.hcl` — an automated writer (sync, backup, replicator): its
-  own prefix, no delete. Two writers cannot read each other's output.
-- `reader-prefix.hcl` — a consumer that resolves by reference (External
-  Secrets Operator, a deploy): read and list only. Bind to a short-TTL
-  Kubernetes-auth role, not a static token.
-- `superuser-carveouts.hcl` — attach alongside any broad policy. `deny` wins
-  over `sudo`, so an identity with "everything" still cannot disable the
-  audit device or seal the store.
+| Identity | Template | Grant |
+|---|---|---|
+| Interactive coding agent | `agent-prefix.hcl` | Create/read/update/delete data under one prefix; read/list metadata and delete metadata for paths it owns. |
+| Automated writer, sync, backup, or replicator | `writer-prefix.hcl` | Create/read/update data and read/list metadata under one prefix; no delete capability. |
+| Reference-only consumer, such as External Secrets Operator or a deploy | `reader-prefix.hcl` | Read/list data and metadata under one prefix; use a short-TTL Kubernetes-auth role rather than a static token. |
+| Reconciler that genuinely needs broad store access | `superuser-carveouts.hcl` alongside its broad policy | Denies the documented store-control paths even when another attached policy grants `sudo`. |
+
+### Render and apply a prefix template
+
+In the first three templates, `PREFIX` means a path relative to the `secret`
+KV mount. For example, use `team-x/app`, not
+`secret/data/team-x/app`, `secret/metadata/team-x/app`, or a path ending in
+`/*`. Keep the same prefix in both the data and metadata paths. A prefix must
+be non-empty, begin with a letter or digit, and contain only letters, digits,
+`.`, `_`, `-`, and `/`; this also prevents the replacement from changing HCL
+syntax.
+
+Render a temporary copy so the shipped template remains unchanged. The
+replacement below changes only the literal placeholder and rejects an unsafe
+prefix before anything is sent to OpenBao:
+
+```bash
+instance_name='replace-with-instance-name'
+role_name='replace-with-role-name'
+template='agent-secrets/policies/agent-prefix.hcl' # choose one row above
+prefix='team-x/app'                                # mount-relative
+policy_name='agent-team-x-app'
+rendered=$(mktemp)
+trap 'rm -f "$rendered"' EXIT
+
+python3 - "$template" "$rendered" "$prefix" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+source, destination, prefix = sys.argv[1:]
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", prefix):
+    raise SystemExit(
+        "PREFIX must start with a letter/digit and contain only "
+        "letters, digits, '.', '_', '-', and '/'"
+    )
+Path(destination).write_text(
+    Path(source).read_text(encoding="utf-8").replace("PREFIX", prefix),
+    encoding="utf-8",
+)
+PY
+
+# Inspect paths and capabilities; this prints policy text only, never a secret.
+awk '/^path / || /capabilities/' "$rendered"
+bao-as "$instance_name" bao policy write "$policy_name" "$rendered"
+```
+
+Set `template` and `policy_name` to match the identity being provisioned.
+Apply `agent-prefix.hcl`, `writer-prefix.hcl`, and `reader-prefix.hcl` with
+the same rendering flow; only the selected grant table changes. Bind the
+resulting policy to that identity's short-lived AppRole or Kubernetes-auth
+role. Do not use a human or root token for the agent.
+
+### Apply the superuser carve-outs
+
+`superuser-carveouts.hcl` has no `PREFIX` placeholder and must not be narrowed,
+rendered, or edited as part of the prefix flow. Load it unchanged as its own
+policy, then attach it alongside the broad policy on the reconciler's role:
+
+```bash
+bao-as "$instance_name" bao policy write superuser-carveouts \
+  agent-secrets/policies/superuser-carveouts.hcl
+bao-as "$instance_name" bao write "auth/approle/role/$role_name" \
+  token_policies="broad-reconciler,superuser-carveouts" token_period=1h
+```
+
+Preserve all five deny paths: `sys/audit`, `sys/audit/*`,
+`sys/config/auditing/*`, `sys/seal`, and `sys/step-down`. The carve-out is
+deny-only, not a replacement for the broad policy, and `deny` wins over
+`sudo`. Do not replace the five paths with only `sys/audit*`; the auditing
+configuration and step-down paths are separate controls.
 
 Every template is checked against the HCL grammar OpenBao's policy loader
 accepts by `policies/test_policies.py` — a stdlib tokenizer + parser, no
@@ -199,7 +266,52 @@ first time someone runs `bao policy write`. The same suite pins each
 template to the grant table above.
 
 Turn on check-and-set for the mount so racing writers get a 400 instead of a
-silent overwrite: `bao write secret/config cas_required=true max_versions=20`.
+silent overwrite: `bao-as "$instance_name" bao write secret/config
+cas_required=true max_versions=20`.
+
+### Verify the effective policy safely
+
+Run the policy-template suite before applying a change, then inspect the
+rendered paths and capabilities. After binding the policy, ask OpenBao for
+the effective capabilities of the exact short-lived identity; `-self` makes
+the CLI use its environment token, so no token value is placed in argv:
+
+```bash
+python3 -m unittest discover -s agent-secrets/policies -v
+check_path="$prefix/example"
+bao-as "$instance_name" bao token capabilities -self \
+  "secret/data/$check_path"
+bao-as "$instance_name" bao token capabilities -self \
+  "secret/metadata/$check_path"
+bao-as "$instance_name" bao token capabilities -self \
+  "secret/data/${prefix}-outside/example"
+```
+
+For a prefix policy, the first two checks should show the capabilities from
+the selected row and the outside-prefix check should be denied (unless some
+other deliberately attached policy grants it). For a role carrying the
+carve-outs, verify that each fixed control path reports `deny`:
+
+```bash
+for denied_path in \
+  sys/audit sys/audit/example sys/config/auditing/example \
+  sys/seal sys/step-down; do
+  bao-as "$instance_name" bao token capabilities -self "$denied_path"
+done
+```
+
+`bao policy read -format=json <name>` is also safe for confirming the policy
+definition because it returns ACL text, not secret data. To prove a KV entry
+exists or to check CAS state, use metadata only:
+
+```bash
+bao-as "$instance_name" bao kv metadata get -format=json \
+  "secret/$prefix/example" | jq -r '.data.current_version'
+```
+
+Never use `bao kv get` as a verification step, print a token, or put a token
+in a command argument; check capabilities, metadata, exit status, or byte
+counts instead.
 
 ## Verify by property, never by value
 
