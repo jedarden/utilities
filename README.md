@@ -72,6 +72,7 @@ python3 -m unittest discover -s org-rule-guard/hooks -p 'test_org_rule_guard.py'
 python3 -m unittest discover -s scripts -p 'test_check_structure.py' -v
 python3 -m unittest discover -s scripts -p 'test_check_versions.py' -v
 python3 -m unittest discover -s scripts -p 'test_hook_composition.py' -v
+python3 -m unittest discover -s scripts -p 'test_install_bundles.py' -v
 ```
 
 Check the shell entry points with:
