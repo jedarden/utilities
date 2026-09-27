@@ -63,7 +63,9 @@ tool; nothing shared between folders except the license and this plan.
   one bounded JSONL record to `${XDG_STATE_HOME:-~/.local/state}/credential-guard/denials.jsonl`
   containing only timestamp, rule id, tool, invocation metadata, and a fixed
   payload-shape label; the matched payload and credential value never enter the
-  log. Logging is best-effort and does not change the enforcement decision.
+  log. The state directory is created mode 0700 and the log mode 0600,
+  regardless of umask; existing log permissions are never loosened. Logging is
+  best-effort and does not change the enforcement decision.
 - `hooks/test_credential_guard.py` — unittest suite; fixtures are built at
   runtime so the test file itself never contains a token-shaped literal. It
   covers the built-in matcher, denied Write/Edit/MultiEdit/Bash calls,
@@ -131,6 +133,8 @@ tool; nothing shared between folders except the license and this plan.
   same fail-open contract as the live hook. Every denial additionally appends one
   JSON line (`ts`, `rule_id`, `tool`, `cwd`, `session_id`, redacted 80-char
   fragment) to `${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl`.
+  Its state directory is created mode 0700 and the log mode 0600, regardless of
+  umask; existing log permissions are never loosened.
   The credential rule logs its pattern name, never a value, and every other
   fragment is scrubbed through the same patterns before it is written.
   Its credential rule is bundled so this utility remains standalone;

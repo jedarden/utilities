@@ -597,9 +597,21 @@ class DenialLog(unittest.TestCase):
         (record,) = log_records(log_path)
         self.assertEqual(len(record["fragment"]), 80)
 
-    def test_state_directory_is_mode_700_and_file_600(self):
-        _decision, log_path = invoke(CASES[0][2])
-        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(log_path)).st_mode), 0o700)
+    def test_fresh_denial_log_and_directory_are_private(self):
+        """Creation modes must protect metadata even with a permissive umask."""
+        state_home = tempfile.mkdtemp(prefix="org-rule-guard-mode-")
+        _CLEANUP.append(state_home)
+        log_dir = os.path.join(state_home, "org-rule-guard")
+        log_path = os.path.join(log_dir, guard.LOG_NAME)
+        self.assertFalse(os.path.exists(log_dir))
+        previous_umask = os.umask(0)
+        try:
+            _decision, actual_log_path = invoke(CASES[0][2], state_home=state_home)
+        finally:
+            os.umask(previous_umask)
+
+        self.assertEqual(actual_log_path, log_path)
+        self.assertEqual(stat.S_IMODE(os.stat(log_dir).st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(os.stat(log_path).st_mode), 0o600)
         self.assertEqual(
             stat.S_IMODE(os.stat(log_path + ".lock").st_mode), 0o600

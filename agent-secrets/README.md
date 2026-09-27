@@ -165,15 +165,17 @@ Every credential denial appends one JSONL record to:
 ${XDG_STATE_HOME:-~/.local/state}/credential-guard/denials.jsonl
 ```
 
-The active log is bounded to 256 KiB with one rotated backup at
-`denials.jsonl.1`; a mode-700 directory, mode-600 log files, and an advisory
-lock keep concurrent hook processes from interleaving records. Each record is
-property-only and contains `ts`, `rule_id`, `tool`, `cwd`, `session_id`, and
-`payload_shape`. The shape is a fixed label such as `Bash.command`,
-`Write.content`, `Edit.new_string`, or `MultiEdit.edits[].new_string`. The
-command, file path, matched text, pattern label, and credential value are never
-written. Logging is best-effort: an unwritable log never turns a deny into an
-allow.
+The state directory is created with mode `0700`, and the active log, one
+rotated backup at `denials.jsonl.1`, and advisory lock are created with mode
+`0600`, regardless of the caller's umask. These private modes keep concurrent
+hook metadata from being exposed or records from interleaving. On later writes,
+the hook may tighten an existing path to these private modes, but it never
+loosens an existing log's permissions. Each record is property-only and
+contains `ts`, `rule_id`, `tool`, `cwd`, `session_id`, and `payload_shape`. The
+shape is a fixed label such as `Bash.command`, `Write.content`,
+`Edit.new_string`, or `MultiEdit.edits[].new_string`. The command, file path,
+matched text, pattern label, and credential value are never written. Logging is
+best-effort: an unwritable log never turns a deny into an allow.
 
 The log can be counted by rule with the same seven-day query used by the org
 guard, changing only the directory:

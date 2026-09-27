@@ -201,10 +201,12 @@ One line per deny, appended with a single `O_APPEND` write so concurrent
 workers on a shared box do not interleave. The hook also takes an advisory lock
 for the rotation-and-append sequence, so concurrent sessions cannot rename the
 active file underneath one another. The directory is owned by the user running
-the hook and is mode 700. The active log, one rotated backup, and the lock file
-are mode 600. Each JSONL record contains exactly the six fields below; records
-are independent, so a malformed or partial line must not be treated as a
-schema change.
+the hook and is created with mode `0700`; the active log, one rotated backup,
+and the lock file are created with mode `0600`, regardless of the caller's
+umask. On later writes, the hook may tighten an existing path to these private
+modes, but it never loosens an existing log's permissions. Each JSONL record
+contains exactly the six fields below; records are independent, so a malformed
+or partial line must not be treated as a schema change.
 
 The active `denials.jsonl` is capped at 256 KiB. When the next record would
 cross that limit, the active file is atomically moved to

@@ -351,6 +351,24 @@ class HookProcess(unittest.TestCase):
                         if isinstance(value, str):
                             self.assertNotIn(value, serialized)
 
+    def test_fresh_denial_log_and_directory_are_private(self):
+        """Creation modes must protect metadata even with a permissive umask."""
+        state_home = tempfile.mkdtemp(prefix="credential-guard-mode-")
+        _CLEANUP.append(state_home)
+        payload = {"tool_name": "Bash", "tool_input": {
+            "command": "printf '%s' '" + token("ghp_") + "'"}}
+        previous_umask = os.umask(0)
+        try:
+            result = run_hook(payload, {"XDG_STATE_HOME": state_home})
+        finally:
+            os.umask(previous_umask)
+
+        self.assertTrue(denied(result))
+        log_dir = os.path.join(state_home, "credential-guard")
+        log_path = os.path.join(log_dir, guard.LOG_NAME)
+        self.assertEqual(stat.S_IMODE(os.stat(log_dir).st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(os.stat(log_path).st_mode), 0o600)
+
     def test_concurrent_denials_append_complete_jsonl_records(self):
         count = 32
         state_home = tempfile.mkdtemp(prefix="credential-guard-concurrent-")
