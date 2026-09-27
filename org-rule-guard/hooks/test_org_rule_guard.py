@@ -709,6 +709,23 @@ class Install(unittest.TestCase):
         with open(path) as fh:
             return fh.read()
 
+    def run_concurrent_wires(self, other_script, other_env):
+        specs = ((self.script, self.env), (other_script, other_env))
+        procs = [subprocess.Popen(["bash", script, "--wire"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  env=env)
+                 for script, env in specs]
+        try:
+            results = [proc.communicate(timeout=60) for proc in procs]
+        finally:
+            for proc in procs:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+        for proc, (stdout, stderr) in zip(procs, results):
+            self.assertEqual(proc.returncode, 0,
+                             stderr.decode() + stdout.decode())
+
     def test_first_install_copies_the_hook_and_leaves_settings_alone(self):
         out = self.run_install()
         self.assertTrue(os.path.exists(self.dst()), out)
@@ -816,6 +833,54 @@ class Install(unittest.TestCase):
             self.assertEqual(fh.read(), original)
         self.assertEqual(stat.S_IMODE(os.stat(self.settings + ".bak").st_mode),
                          0o600)
+
+    def test_wire_replaces_settings_atomically(self):
+        original = b'{"model": "opus"}\n'
+        with open(self.settings, "wb") as fh:
+            fh.write(original)
+
+        with open(self.settings, "rb") as old_settings:
+            old_inode = os.fstat(old_settings.fileno()).st_ino
+            out = self.run_install("--wire")
+            old_settings.seek(0)
+            self.assertEqual(old_settings.read(), original, out)
+
+        self.assertNotEqual(os.stat(self.settings).st_ino, old_inode)
+        with open(self.settings) as fh:
+            self.assertIsInstance(json.load(fh), dict)
+        leftovers = [name for name in os.listdir(os.path.dirname(self.settings))
+                     if name.startswith(".settings.json.") and name.endswith(".tmp")]
+        self.assertEqual(leftovers, [], out)
+
+    def test_wire_preserves_live_settings_permissions(self):
+        with open(self.settings, "w") as fh:
+            json.dump({"model": "opus"}, fh)
+        os.chmod(self.settings, 0o600)
+
+        self.run_install("--wire")
+
+        self.assertEqual(stat.S_IMODE(os.stat(self.settings).st_mode), 0o600)
+
+    def test_concurrent_wires_preserve_both_installers_and_settings(self):
+        with open(self.settings, "w") as fh:
+            json.dump({"model": "opus", "padding": "x" * (4 * 1024 * 1024)}, fh)
+        agent_script = os.path.join(HERE, os.pardir, os.pardir,
+                                    "agent-secrets", "install.sh")
+        agent_env = dict(self.env,
+                         BIN_DIR=os.path.join(self.root, "bin"),
+                         BAO_AS_CONFIG_DIR=os.path.join(self.root, "conf", "bao-as"))
+        self.run_concurrent_wires(agent_script, agent_env)
+
+        with open(self.settings) as fh:
+            settings = json.load(fh)
+        commands = [entry["hooks"][0]["command"]
+                    for entry in settings["hooks"]["PreToolUse"]]
+        self.assertEqual(set(commands), {
+            "python3 %s" % self.dst(),
+            "python3 %s" % os.path.join(self.hooks_dir, "credential-guard.py"),
+        })
+        self.assertEqual(settings["model"], "opus")
+        self.assertEqual(len(settings["padding"]), 4 * 1024 * 1024)
 
     def assert_malformed_settings_is_untouched(self, original):
         with open(self.settings, "wb") as fh:

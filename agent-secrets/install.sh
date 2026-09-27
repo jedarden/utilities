@@ -83,9 +83,18 @@ echo "instances  $CONF_DIR/instances.conf  (edit; put role_id/secret_id under $C
 
 if [ "$mode" = "--wire" ]; then
   python3 - "$SETTINGS" "$HOOK_DST" <<'PY'
-import json, os, shutil, stat, sys
+import fcntl
+import json
+import os
+import shutil
+import stat
+import sys
+import tempfile
 path, hook = sys.argv[1], sys.argv[2]
 cmd = f"python3 {hook}"
+lock_path = path + ".lock"
+settings_dir = os.path.dirname(os.path.abspath(path))
+settings_name = os.path.basename(path)
 
 def snapshot_backup():
     backup = path + ".bak"
@@ -107,28 +116,52 @@ def refuse_invalid_settings(reason):
           "settings file was not modified", file=sys.stderr)
     raise SystemExit(1)
 
-s = {}
-if os.path.exists(path):
-    try:
-        with open(path) as fh:
-            s = json.load(fh)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        refuse_invalid_settings(f"invalid JSON ({exc})")
-    if not isinstance(s, dict):
-        refuse_invalid_settings("top-level value must be a JSON object")
-pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
-present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
-if not present:
-    snapshot_backup()
-    pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
-                "hooks": [{"type": "command", "command": cmd}]})
-    tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(s, fh, indent=2); fh.write("\n")
-    os.replace(tmp, path)
-    print(f"wired      {path}")
-else:
-    print(f"already    {path}")
+with open(lock_path, "a+") as lock:
+    os.chmod(lock_path, stat.S_IRUSR | stat.S_IWUSR)
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+
+    s = {}
+    source_mode = None
+    if os.path.exists(path):
+        source_mode = stat.S_IMODE(os.stat(path).st_mode)
+        try:
+            with open(path) as fh:
+                s = json.load(fh)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            refuse_invalid_settings(f"invalid JSON ({exc})")
+        if not isinstance(s, dict):
+            refuse_invalid_settings("top-level value must be a JSON object")
+    pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
+    if not present:
+        snapshot_backup()
+        pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
+                    "hooks": [{"type": "command", "command": cmd}]})
+        fd, tmp = tempfile.mkstemp(
+            prefix=f".{settings_name}.", suffix=".tmp", dir=settings_dir
+        )
+        try:
+            if source_mode is not None:
+                os.fchmod(fd, source_mode)
+            with os.fdopen(fd, "w") as fh:
+                fd = None
+                json.dump(s, fh, indent=2)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+            tmp = None
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+        print(f"wired      {path}")
+    else:
+        print(f"already    {path}")
 PY
 else
   echo

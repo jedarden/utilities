@@ -59,6 +59,19 @@ concatenate the two JSON objects; doing so can discard unrelated settings and
 hooks. If a non-default settings path is used, pass that same path through
 `CLAUDE_SETTINGS` on every run.
 
+The merge is protected by an exclusive advisory lock at
+`$SETTINGS.lock`, which the installers keep so every concurrent `--wire` run
+uses the same lock. The lock covers reading, merging, backup creation, and
+replacement. Each changed file is written to a uniquely named temporary file
+in the settings file's directory, flushed, and atomically renamed into place;
+an interruption before the rename therefore leaves the live file complete.
+When rewriting an existing file, the replacement keeps the live file's
+permission bits, including mode `0600`. If both installers are started at the
+same time, one waits for the other and then rereads its result, so both hook
+entries and unrelated settings are preserved. Manual editors or other writers
+that do not honor the same advisory lock must not modify the file during a
+wire; their edits are outside this serialization guarantee.
+
 The `.bak` is a permanent, one-time pre-wiring snapshot, not a rolling backup:
 `--wire` and `--uninstall` never rewrite or remove an existing one. To inspect
 what wiring changed, compare it with the live file:

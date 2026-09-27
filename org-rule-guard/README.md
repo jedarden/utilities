@@ -108,6 +108,18 @@ settings.
 bundle, and merges this same entry. A bare `install.sh` prints it without
 changing settings; it still stages the bundle when it installs.
 
+The settings merge is protected by an exclusive advisory lock at
+`$CLAUDE_SETTINGS.lock` (or `~/.claude/settings.json.lock`), which is kept so
+concurrent `--wire` runs use the same lock. The lock covers reading, merging,
+backup creation, and replacement. Each changed file is written to a uniquely
+named temporary file in the settings file's directory, flushed, and
+atomically renamed into place; an interruption before the rename leaves the
+live file complete. Rewriting an existing file preserves its permission bits,
+including mode `0600`. If the two utility installers run concurrently, the
+second waits and rereads the first result, preserving both hook entries and
+unrelated settings. Manual writers that do not honor the same advisory lock
+must not edit the file during a wire; their races are outside this guarantee.
+
 When `--wire` changes an existing settings file, it creates
 `$CLAUDE_SETTINGS.bak` (or `~/.claude/settings.json.bak`) immediately before
 the first wiring change, but only if that backup does not already exist. The
