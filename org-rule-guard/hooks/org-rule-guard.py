@@ -36,12 +36,18 @@ Bash rules:
 Denial log: every deny appends one JSON line to
   ${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl
 recording which rule fired, where, and a redacted fragment of what matched.
+The active file is capped at 256 KiB; when the next record would cross that
+limit it is rotated to `denials.jsonl.1`, replacing the previous backup.
+An advisory lock in the same directory serializes rotation and append across
+concurrent hook processes. The active file, one backup, and lock file are
+owned by the user running the hook and kept mode 600 in a mode 700 directory.
 The enforcement layer previously had exactly one output path — the deny JSON
 on stdout — so nothing could say which rule agents keep hitting, in which
 repo, how often, and the CLAUDE.md prose could not be tuned against evidence.
 Logging is strictly best-effort: a log that cannot be written must never
 change the decision, so every failure in that path is swallowed.
 """
+import fcntl
 import json
 import os
 import re
@@ -93,6 +99,10 @@ def deny(rule_id, reason, fragment=""):
 
 STATE_DIR_ENV = "ORG_RULE_GUARD_STATE_DIR"
 LOG_NAME = "denials.jsonl"
+ROTATED_LOG_NAME = "denials.jsonl.1"
+LOCK_NAME = "denials.jsonl.lock"
+MAX_LOG_BYTES = 256 * 1024
+MAX_LOG_FIELD_CHARS = 512
 
 
 def state_dir():
@@ -121,9 +131,21 @@ def _redact(text):
     return " ".join(out.split())
 
 
+def _log_value(value):
+    """Keep metadata bounded so one malformed payload cannot defeat rotation."""
+    if not value:
+        return ""
+    return str(value)[:MAX_LOG_FIELD_CHARS]
+
+
 def log_denial(rule_id, fragment):
-    """Append one JSON line. Best-effort by contract: `deny` wraps this in a
-    bare except, so nothing here may raise its way into the decision."""
+    """Append one bounded JSON line under the lifecycle lock.
+
+    Best-effort by contract: `deny` wraps this in a bare except, so nothing
+    here may raise its way into the decision. The lock covers both rotation
+    and append; the write itself remains one O_APPEND write so every process
+    using this hook contributes a complete record or no record.
+    """
     payload = _PAYLOAD if isinstance(_PAYLOAD, dict) else {}
     cwd = payload.get("cwd")
     if not cwd:
@@ -134,19 +156,68 @@ def log_denial(rule_id, fragment):
     record = {
         "ts": _utcnow(),
         "rule_id": rule_id,
-        "tool": payload.get("tool_name") or "",
-        "cwd": cwd,
-        "session_id": payload.get("session_id") or "",
+        "tool": _log_value(payload.get("tool_name")),
+        "cwd": _log_value(cwd),
+        "session_id": _log_value(payload.get("session_id")),
         "fragment": _redact(fragment)[:80],
     }
     directory = state_dir()
     os.makedirs(directory, mode=0o700, exist_ok=True)
     os.chmod(directory, 0o700)          # exist_ok does not fix an existing dir
     line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
-    fd = os.open(os.path.join(directory, LOG_NAME),
-                 os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    lock_path = os.path.join(directory, LOCK_NAME)
+    lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
     try:
-        os.write(fd, line)              # single O_APPEND write: no interleaving
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        log_path = os.path.join(directory, LOG_NAME)
+        rotated_path = os.path.join(directory, ROTATED_LOG_NAME)
+        try:
+            current_size = os.stat(log_path).st_size
+        except FileNotFoundError:
+            current_size = 0
+        if current_size and current_size + len(line) > MAX_LOG_BYTES:
+            os.replace(log_path, rotated_path)
+            os.chmod(rotated_path, 0o600)
+            _trim_log(rotated_path)
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.chmod(log_path, 0o600)
+            written = os.write(fd, line)  # single O_APPEND write: no interleaving
+            if written != len(line):
+                raise OSError("short denial-log write")
+        finally:
+            os.close(fd)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
+
+def _trim_log(path):
+    """Keep at most MAX_LOG_BYTES from an oversized rotated log.
+
+    Oversized files can predate this lifecycle policy or be supplied by an
+    operator. Retaining the newest complete lines is preferable to preserving
+    an unbounded history; if no complete line fits, the old backup is emptied.
+    """
+    if os.stat(path).st_size <= MAX_LOG_BYTES:
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.lseek(fd, -MAX_LOG_BYTES, os.SEEK_END)
+        data = os.read(fd, MAX_LOG_BYTES)
+    finally:
+        os.close(fd)
+    first_newline = data.find(b"\n")
+    data = data[first_newline + 1:] if first_newline >= 0 else b""
+    fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
+    try:
+        if data:
+            written = os.write(fd, data)
+            if written != len(data):
+                raise OSError("short denial-log trim write")
     finally:
         os.close(fd)
 

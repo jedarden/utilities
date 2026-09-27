@@ -160,10 +160,24 @@ ${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl
 ```
 
 One line per deny, appended with a single `O_APPEND` write so concurrent
-workers on a shared box do not interleave. The directory is mode 700 and the
-file 600. Each JSONL record contains exactly the six fields below; records are
-independent, so a malformed or partial line must not be treated as a schema
-change.
+workers on a shared box do not interleave. The hook also takes an advisory lock
+for the rotation-and-append sequence, so concurrent sessions cannot rename the
+active file underneath one another. The directory is owned by the user running
+the hook and is mode 700. The active log, one rotated backup, and the lock file
+are mode 600. Each JSONL record contains exactly the six fields below; records
+are independent, so a malformed or partial line must not be treated as a
+schema change.
+
+The active `denials.jsonl` is capped at 256 KiB. When the next record would
+cross that limit, the active file is atomically moved to
+`denials.jsonl.1`, replacing the previous backup, and the new record starts a
+fresh active file. The backup is trimmed to the same limit when necessary, so
+the two retained log files occupy at most 512 KiB in total. The lock file is
+`denials.jsonl.lock`; it is an implementation detail and is not JSONL data.
+This is a bounded rolling window, not an archival log: older denials are
+discarded at rotation. All hook processes using this utility take the same
+lock, and each record is written with one `O_APPEND` write while holding it.
+Manual writers that do not honor that lock are outside the atomicity contract.
 
 ```json
 {"ts": "2026-09-05T12:41:07Z", "rule_id": "mutating-kubectl",
@@ -246,18 +260,18 @@ defaulting to this copy — the same fixtures prove the port matches the live
 hook and that the log behaves:
 
 ```bash
-# decisions + log + installer, against the ported copy   (45 tests)
+# decisions + log + installer, against the ported copy   (47 tests)
 python3 -m unittest discover -s ~/utilities/org-rule-guard/hooks
 
-# same suite, against the live hook                      (27 tests, 18 skipped)
+# same suite, against the live hook                      (log tests skipped if unsupported)
 ORG_RULE_GUARD_UNDER_TEST=~/.claude/hooks/org-rule-guard.py \
   python3 -m unittest discover -s ~/utilities/org-rule-guard/hooks
 ```
 
-The 15 log tests are skipped against the live hook because it predates the log
-(`LOGS = hasattr(guard, "log_denial")`), not because they would fail. Every run
-points `XDG_STATE_HOME` at a throwaway directory, so running the suite never
-appends synthetic denials to a real log.
+The denial-log tests are skipped against the live hook because it predates the
+log (`LOGS = hasattr(guard, "log_denial")`), not because they would fail. Every
+run points `XDG_STATE_HOME` at a throwaway directory, so running the suite
+never appends synthetic denials to a real log.
 
 The cross-utility composition test runs from the repository root and invokes
 both hook files against the same payloads, including both hook orders:

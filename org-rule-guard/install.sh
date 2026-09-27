@@ -83,7 +83,7 @@ install -m 755 "$HERE/hooks/org-rule-guard.py" "$HOOK_DST"
 install -m 755 "$HERE/../agent-secrets/hooks/credential-guard.py" "$BUNDLE_DST"
 echo "installed  $HOOK_DST"
 echo "bundled    $BUNDLE_DST (agent-secrets v$BUNDLE_VERSION)"
-echo "log        ${XDG_STATE_HOME:-$HOME/.local/state}/org-rule-guard/denials.jsonl  (written on the first denial)"
+echo "log        ${XDG_STATE_HOME:-$HOME/.local/state}/org-rule-guard/denials.jsonl  (256 KiB active cap, one rotated backup)"
 
 if [ "$mode" = "--wire" ]; then
   python3 - "$SETTINGS" "$HOOK_DST" <<'PY'

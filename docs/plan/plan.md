@@ -149,9 +149,14 @@ tool; nothing shared between folders except the license and this plan.
 None. Configuration is files under `~/.config/bao-as/` (instance table and
 per-instance `role_id` / `secret_id`, mode 0600) and an optional
 `~/.config/credential-guard/patterns.json` for extra patterns. The one state
-artifact is `org-rule-guard`'s denial log,
-`${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl` — append-only
-JSONL, one record per deny, never read back by the hook that writes it.
+artifact is `org-rule-guard`'s denial-log directory,
+`${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/`, owned by the user running
+the hook. It contains the mode-600 active `denials.jsonl`, one mode-600
+`denials.jsonl.1` backup, and a mode-600 advisory lock. The active log is capped
+at 256 KiB and rotates to the single backup before an append would cross that
+bound; the two retained JSONL files are therefore capped at 512 KiB in total.
+Concurrent hook processes take the lock across rotation and their single
+`O_APPEND` record write. The hook never reads log records as application data.
 
 ## Implementation Phases
 
@@ -177,7 +182,9 @@ JSONL, one record per deny, never read back by the hook that writes it.
   standalone credential rule remains the fallback until that bundle is used.
   Same fail-open contract, same tests passing before and after.
   - [x] Phase 3(a): denial log — shipped 2026-09-05 as `org-rule-guard/`
-    v0.1.0 (45 tests, green against both the ported copy and the live hook)
+    v0.1.0; its bounded two-file rotation and cross-process append lock are
+    covered by regression tests (green against the ported copy and the live
+    hook where supported)
   - [ ] Phase 3(b): YAML rules with the credential rule consuming the pinned
     install-time bundle while preserving the standalone fallback and documenting
     optional settings-level companion composition

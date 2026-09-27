@@ -23,6 +23,7 @@ a real log.
 """
 import importlib.util
 import json
+import multiprocessing
 import os
 import shutil
 import stat
@@ -216,6 +217,21 @@ def isolated_env(**extra):
     return env
 
 
+def _concurrent_log_worker(state, barrier, worker_id):
+    """Write through the imported hook so the test exercises its file lock."""
+    os.environ["ORG_RULE_GUARD_STATE_DIR"] = state
+    guard.MAX_LOG_BYTES = 1024
+    guard._PAYLOAD = {
+        "tool_name": "Bash",
+        "cwd": "/repo/worker-" + str(worker_id),
+        "session_id": "session-" + str(worker_id),
+    }
+    barrier.wait()
+    for index in range(12):
+        guard.log_denial(guard.RULE_MUTATING_KUBECTL,
+                         "record-" + str(worker_id) + "-" + str(index))
+
+
 class Decisions(unittest.TestCase):
     """Rule behaviour. Runs against the live hook and the ported copy alike."""
 
@@ -364,6 +380,80 @@ class DenialLog(unittest.TestCase):
         records = log_records(os.path.join(sh, "org-rule-guard", "denials.jsonl"))
         self.assertEqual(len(records), len(supported_cases()))
 
+    def test_rotation_keeps_active_and_backup_within_the_bound(self):
+        sh = tempfile.mkdtemp(prefix="org-rule-guard-test-")
+        _CLEANUP.append(sh)
+        state = os.path.join(sh, "org-rule-guard")
+        old_limit = guard.MAX_LOG_BYTES
+        old_payload = guard._PAYLOAD
+        old_override = os.environ.get("ORG_RULE_GUARD_STATE_DIR")
+        try:
+            guard.MAX_LOG_BYTES = 1024
+            guard._PAYLOAD = {"tool_name": "Bash", "cwd": "/repo",
+                              "session_id": "rotation-test"}
+            os.environ["ORG_RULE_GUARD_STATE_DIR"] = state
+            for index in range(16):
+                guard.log_denial(guard.RULE_MUTATING_KUBECTL,
+                                 "rotation-record-" + str(index) + "-" + alnum(80, index))
+        finally:
+            guard.MAX_LOG_BYTES = old_limit
+            guard._PAYLOAD = old_payload
+            if old_override is None:
+                os.environ.pop("ORG_RULE_GUARD_STATE_DIR", None)
+            else:
+                os.environ["ORG_RULE_GUARD_STATE_DIR"] = old_override
+        active = os.path.join(state, guard.LOG_NAME)
+        rotated = os.path.join(state, guard.ROTATED_LOG_NAME)
+        self.assertTrue(os.path.exists(active))
+        self.assertTrue(os.path.exists(rotated))
+        self.assertLessEqual(os.path.getsize(active), 1024)
+        self.assertLessEqual(os.path.getsize(rotated), 1024)
+        self.assertLessEqual(os.path.getsize(active) + os.path.getsize(rotated), 2048)
+        self.assertLess(len(log_records(active)) + len(log_records(rotated)), 16)
+
+    @unittest.skipUnless(hasattr(multiprocessing, "get_context"),
+                         "multiprocessing context support is required")
+    def test_concurrent_rotation_keeps_json_lines_complete(self):
+        if "fork" not in multiprocessing.get_all_start_methods():
+            self.skipTest("the test requires fork to share the imported hook module")
+        sh = tempfile.mkdtemp(prefix="org-rule-guard-test-")
+        _CLEANUP.append(sh)
+        state = os.path.join(sh, "org-rule-guard")
+        old_limit = guard.MAX_LOG_BYTES
+        try:
+            guard.MAX_LOG_BYTES = 1024
+            context = multiprocessing.get_context("fork")
+            barrier = context.Barrier(4)
+            workers = [context.Process(target=_concurrent_log_worker,
+                                        args=(state, barrier, worker_id))
+                       for worker_id in range(4)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(20)
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join()
+                self.assertEqual(worker.exitcode, 0)
+        finally:
+            guard.MAX_LOG_BYTES = old_limit
+        active = os.path.join(state, guard.LOG_NAME)
+        rotated = os.path.join(state, guard.ROTATED_LOG_NAME)
+        paths = [path for path in (active, rotated) if os.path.exists(path)]
+        self.assertEqual(len(paths), 2)
+        self.assertTrue(os.path.exists(os.path.join(state, guard.LOCK_NAME)))
+        self.assertLessEqual(sum(os.path.getsize(path) for path in paths), 2048)
+        records = []
+        for path in paths:
+            with open(path, "rb") as handle:
+                for line in handle:
+                    self.assertTrue(line.endswith(b"\n"), path)
+                    records.append(json.loads(line))
+        self.assertTrue(records)
+        for record in records:
+            self.assertEqual(sorted(record),
+                             ["cwd", "fragment", "rule_id", "session_id", "tool", "ts"])
+
     def test_credential_rule_logs_the_pattern_name_only(self):
         _decision, log_path = invoke(CASES[4][2])
         (record,) = log_records(log_path)
@@ -403,6 +493,9 @@ class DenialLog(unittest.TestCase):
         _decision, log_path = invoke(CASES[0][2])
         self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(log_path)).st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(os.stat(log_path).st_mode), 0o600)
+        self.assertEqual(
+            stat.S_IMODE(os.stat(log_path + ".lock").st_mode), 0o600
+        )
 
     def test_missing_session_and_cwd_fall_back(self):
         """A caller that omits them still gets a usable record, and a vanished
