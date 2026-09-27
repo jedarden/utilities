@@ -16,9 +16,10 @@ One addition: every deny appends one JSON line to a log.
 | 3 | `latest-image-tag` | `.yaml`/`.yml` only | `image: …:latest`, which breaks rollback |
 | 4 | `mutating-kubectl` | Bash | `kubectl apply/delete/patch/scale/…`; read-only verbs, `exec`, `cp`, `logs` and Argo Workflow submission stay allowed |
 | 5 | `credential-value` | **every** file type, and Bash | a credential *value*; secrets travel by reference |
-| 6 | `git-commit-all`, `git-commit-no-pathspec` | Bash | `git commit -a` and bare `git commit -m`, which sweep in a sibling worker's staged files |
+| 6 | `git-add-all`, `git-commit-all`, `git-commit-no-pathspec` | Bash | blanket `git add -A`/`.`/`--all`, `git commit -a`, and bare `git commit -m`, which sweep in a sibling worker's staged files |
 
-Rule 6 has two slugs because it has two failure modes with different fixes.
+Rule 6 has three slugs because blanket staging and the two commit failure
+modes have different fixes.
 Rules 2–3 match real manifest lines only, never comments, so a document that
 *describes* the prohibition is not itself blocked — this README passes.
 
@@ -136,7 +137,7 @@ defaulting to this copy — the same fixtures prove the port matches the live
 hook and that the log behaves:
 
 ```bash
-# decisions + log + installer, against the ported copy   (38 tests)
+# decisions + log + installer, against the ported copy   (40 tests)
 python3 -m unittest discover -s ~/utilities/org-rule-guard/hooks
 
 # same suite, against the live hook                      (23 tests, 15 skipped)

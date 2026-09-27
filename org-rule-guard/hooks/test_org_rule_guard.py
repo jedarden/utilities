@@ -105,6 +105,10 @@ KUBECTL_READ = "kubectl get pods -n argo-workflows"
 COMMIT_ALL = "git" + " commit --all -m 'sweep the index'"
 COMMIT_NO_PATHSPEC = "git" + " commit -m 'sweep the index'"
 COMMIT_SCOPED = "git" + " commit src/app.py -m 'sweep the index'"
+ADD_ALL_SHORT = "git" + " add -A"
+ADD_DOT = "git" + " add ."
+ADD_ALL_LONG = "git" + " add --all"
+ADD_SCOPED = "git" + " add src/app.py"
 
 CREDENTIAL_BODY = "# credentials: " + token("ghp_", 36, seed=3)
 CREDENTIAL_PROSE = "Rotate the ghp_ prefix token stored in OpenBao, never by value."
@@ -144,6 +148,9 @@ CASES = [
     ("git-commit-no-pathspec",
      bash(COMMIT_SCOPED),
      bash(COMMIT_NO_PATHSPEC)),
+    ("git-add-all",
+     bash(ADD_SCOPED),
+     bash(ADD_ALL_SHORT)),
 ]
 
 
@@ -231,6 +238,16 @@ class Decisions(unittest.TestCase):
 
     def test_git_commit_amend_without_all_is_allowed(self):
         decision, _ = invoke(bash("git" + " commit --amend -m 'typo'"))
+        self.assertFalse(denied(decision))
+
+    def test_git_add_blanket_forms_are_denied(self):
+        for command in (ADD_ALL_SHORT, ADD_DOT, ADD_ALL_LONG):
+            with self.subTest(command=command):
+                decision, _ = invoke(bash(command))
+                self.assertTrue(denied(decision))
+
+    def test_git_add_explicit_path_is_allowed(self):
+        decision, _ = invoke(bash(ADD_SCOPED))
         self.assertFalse(denied(decision))
 
     def test_piped_grep_mentioning_a_banned_verb_is_allowed(self):

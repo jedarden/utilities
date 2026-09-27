@@ -24,10 +24,11 @@ Bash rules:
      namespace (the sanctioned manual-CI path).
   5. no credential VALUES in commands (same rule 5 as Write/Edit). Catches
      `echo "ghp_..." > file`, `curl -H "Authorization: ghp_..."`, etc.
-  6. no `git commit -a`/`--all`, no bare `git commit -m` with no pathspec.
-     Both commit the ENTIRE staged index, which in a checkout shared by
-     concurrent NEEDLE workers can silently sweep in another worker's
-     unrelated staged files (confirmed live 2026-08-14, commitgraph).
+  6. no blanket `git add` (`-A`, `.`, or `--all`), no `git commit -a`/`--all`,
+     no bare `git commit -m` with no pathspec. Both blanket staging and these
+     commit forms can silently sweep in another worker's unrelated staged
+     files in a checkout shared by concurrent NEEDLE workers (confirmed live
+     2026-08-14, commitgraph).
      Stopgap ahead of irreversible-command-gate's own `commit-without-
      pathspec` rule (bead irrevers-57af0680) — replace this rule with that
      project's `git` pack once it ships (~/irreversible-command-gate).
@@ -58,12 +59,13 @@ RULE_JOB_CRONJOB = "k8s-job-cronjob"
 RULE_LATEST_TAG = "latest-image-tag"
 RULE_MUTATING_KUBECTL = "mutating-kubectl"
 RULE_CREDENTIAL = "credential-value"
+RULE_GIT_ADD_ALL = "git-add-all"
 RULE_COMMIT_ALL = "git-commit-all"
 RULE_COMMIT_NO_PATHSPEC = "git-commit-no-pathspec"
 RULE_IDS = (
     RULE_GITHUB_ACTIONS, RULE_JOB_CRONJOB, RULE_LATEST_TAG,
     RULE_MUTATING_KUBECTL, RULE_CREDENTIAL, RULE_COMMIT_ALL,
-    RULE_COMMIT_NO_PATHSPEC,
+    RULE_COMMIT_NO_PATHSPEC, RULE_GIT_ADD_ALL,
 )
 
 # The hook input for this invocation, kept for the denial log (session_id,
@@ -206,6 +208,7 @@ GIT_COMMIT_VALUE_FLAGS = {
     "-F", "--file", "--author", "--date", "--template", "--fixup", "--squash",
 }
 GIT_COMMIT_ALL_FLAGS = {"-a", "--all"}
+GIT_ADD_ALL_FLAGS = {"-A", "--all"}
 # `--amend` alone (no `-a`) is exempt from the pathspec requirement:
 # amending the last commit with whatever is currently staged is a common,
 # usually-intentional operation (fix a typo, add a forgotten file to the
@@ -213,6 +216,33 @@ GIT_COMMIT_ALL_FLAGS = {"-a", "--all"}
 # silently absorbing whatever a sibling process staged. `-a`/`--all`
 # combined with `--amend` still denies via the has_all branch below.
 GIT_COMMIT_AMEND_FLAGS = {"--amend"}
+
+
+def check_git_add(args):
+    """Rule 6: blanket `git add` forms must name explicit paths instead.
+
+    `git add -A`, `git add .`, and `git add --all` stage the entire working
+    tree (or the entire current directory), which can pull another worker's
+    unrelated files into the next commit in a shared checkout.
+    """
+    try:
+        idx = args.index("add")
+    except ValueError:
+        return
+    rest = args[idx + 1:]
+    if not any(tok in GIT_ADD_ALL_FLAGS or tok == "." for tok in rest):
+        return
+    invocation = " ".join(rest)
+    deny(
+        RULE_GIT_ADD_ALL,
+        "`git add -A`/`git add .`/`git add --all` stages the ENTIRE working "
+        "tree, which can silently sweep in another worker's unrelated files. "
+        "Pass explicit paths instead: `git add <paths>`. Stopgap ahead of "
+        "irreversible-command-gate's own commit-without-pathspec rule "
+        "(bead irrevers-57af0680) — see the Hard prohibitions section of "
+        "~/CLAUDE.md.",
+        invocation,
+    )
 
 
 def check_git_commit(args):
@@ -330,7 +360,9 @@ def check_bash(cmd):
             gi = next((k for k, t in enumerate(shlex_toks)
                        if t.rsplit("/", 1)[-1] == "git"), None)
             if gi is not None:
-                check_git_commit(shlex_toks[gi + 1:])
+                git_args = shlex_toks[gi + 1:]
+                check_git_add(git_args)
+                check_git_commit(git_args)
             continue
         if exe != "kubectl":
             continue
