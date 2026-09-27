@@ -88,16 +88,22 @@ echo "credential ${XDG_STATE_HOME:-$HOME/.local/state}/credential-guard/denials.
 
 if [ "$mode" = "--wire" ]; then
   python3 - "$SETTINGS" "$HOOK_DST" <<'PY'
-import json, os, shutil, sys
+import json, os, shutil, stat, sys
 path, hook = sys.argv[1], sys.argv[2]
 cmd = f"python3 {hook}"
+
+def snapshot_backup():
+    backup = path + ".bak"
+    if os.path.isfile(path) and not os.path.lexists(backup):
+        source_mode = stat.S_IMODE(os.stat(path).st_mode)
+        shutil.copyfile(path, backup)
+        os.chmod(backup, source_mode)
+        print(f"backup     {backup}")
 
 def refuse_invalid_settings(reason):
     backup = path + ".bak"
     try:
-        if os.path.isfile(path) and not os.path.lexists(backup):
-            shutil.copy2(path, backup)
-            print(f"backup     {backup}")
+        snapshot_backup()
     except OSError as exc:
         print(f"install.sh: refusing to wire {path}: {reason}; "
               f"could not create backup {backup}: {exc}", file=sys.stderr)
@@ -118,10 +124,7 @@ if os.path.exists(path):
 pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
 present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
 if not present:
-    backup = path + ".bak"
-    if os.path.isfile(path) and not os.path.lexists(backup):
-        shutil.copy2(path, backup)
-        print(f"backup     {backup}")
+    snapshot_backup()
     pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
                 "hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
     tmp = path + ".tmp"

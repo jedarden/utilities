@@ -59,6 +59,29 @@ concatenate the two JSON objects; doing so can discard unrelated settings and
 hooks. If a non-default settings path is used, pass that same path through
 `CLAUDE_SETTINGS` on every run.
 
+The `.bak` is a permanent, one-time pre-wiring snapshot, not a rolling backup:
+`--wire` and `--uninstall` never rewrite or remove an existing one. To inspect
+what wiring changed, compare it with the live file:
+
+```bash
+SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+diff -u "$SETTINGS.bak" "$SETTINGS"
+```
+
+For a wholesale rollback to the pre-wiring file, review the diff and then run:
+
+```bash
+SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+cp -p "$SETTINGS.bak" "$SETTINGS"
+```
+
+If later settings changes should be kept, use the diff as the baseline and
+merge only the wiring changes instead. The installer creates the backup with
+the source settings file's permission bits, so a mode-`0600` `settings.json`
+produces a mode-`0600` backup. Delete the `.bak` only after verifying the live
+settings and deciding that this rollback point is no longer needed; a later
+`--wire` change will create a new snapshot if the file is absent.
+
 If an existing settings file is malformed JSON, or its top-level value is not
 an object, either installer creates the pre-wiring `.bak` when it is owed,
 prints a clear refusal to stderr, exits nonzero, and leaves the settings file

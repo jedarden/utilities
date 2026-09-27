@@ -115,6 +115,23 @@ backup therefore remains the pre-wiring settings file when another utility is
 wired later or this installer is run again. If the settings file does not yet
 exist, no backup is created because there is no prior file to preserve.
 
+The `.bak` is a permanent, one-time pre-wiring snapshot rather than a rolling
+backup. `--wire` and `--uninstall` never rewrite or remove an existing backup.
+Inspect a suspected bad wire with:
+
+```bash
+SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
+diff -u "$SETTINGS.bak" "$SETTINGS"
+```
+
+After reviewing the diff, restore the whole pre-wiring file with
+`cp -p "$SETTINGS.bak" "$SETTINGS"`, or merge only the wiring changes if
+later settings edits must be kept. The installer gives the backup
+the source file's permission bits, so a mode-`0600` settings file produces a
+mode-`0600` backup. Delete the backup only after the live settings are verified
+and this rollback point is no longer needed; the next wiring change creates a
+new snapshot when no backup is present.
+
 If an existing settings file is malformed JSON, or its top-level value is not
 an object, `--wire` creates the pre-wiring `.bak` when it is owed, prints a
 clear refusal to stderr, exits nonzero, and leaves the settings file

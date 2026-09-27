@@ -807,12 +807,15 @@ class Install(unittest.TestCase):
         original = b'{"model": "opus", "hooks": {"Stop": []}}\n'
         with open(self.settings, "wb") as fh:
             fh.write(original)
+        os.chmod(self.settings, 0o600)
 
         out = self.run_install("--wire")
 
         self.assertIn("backup", out)
         with open(self.settings + ".bak", "rb") as fh:
             self.assertEqual(fh.read(), original)
+        self.assertEqual(stat.S_IMODE(os.stat(self.settings + ".bak").st_mode),
+                         0o600)
 
     def assert_malformed_settings_is_untouched(self, original):
         with open(self.settings, "wb") as fh:
@@ -852,6 +855,24 @@ class Install(unittest.TestCase):
 
         with open(self.settings + ".bak", "rb") as fh:
             self.assertEqual(fh.read(), sentinel)
+
+    def test_wire_and_uninstall_never_change_an_existing_settings_backup(self):
+        original = b'{"model": "opus"}\n'
+        sentinel = b"operator-selected baseline\n"
+        with open(self.settings, "wb") as fh:
+            fh.write(original)
+        with open(self.settings + ".bak", "wb") as fh:
+            fh.write(sentinel)
+        os.chmod(self.settings + ".bak", 0o600)
+
+        self.run_install("--wire")
+        self.run_install("--wire")
+        self.run_install("--uninstall")
+
+        with open(self.settings + ".bak", "rb") as fh:
+            self.assertEqual(fh.read(), sentinel)
+        self.assertEqual(stat.S_IMODE(os.stat(self.settings + ".bak").st_mode),
+                         0o600)
 
     def test_wire_replaces_an_existing_hook_copy(self):
         self.run_install()
