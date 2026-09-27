@@ -41,6 +41,7 @@ spec.loader.exec_module(guard)
 # The ported hook logs denials; the live hook it was ported from does not
 # yet. Log-behaviour assertions are meaningful only against the former.
 LOGS = hasattr(guard, "log_denial")
+GIT_ADD_RULE = hasattr(guard, "check_git_add")
 
 _CLEANUP = []
 
@@ -73,6 +74,13 @@ JOB_MANIFEST = "\n".join([
     "  name: batch-index",
 ])
 
+CRONJOB_MANIFEST = "\n".join([
+    "apiVersion: batch/v1",
+    "kind" + ": " + "CronJob",
+    "metadata:",
+    "  name: scheduled-index",
+])
+
 JOB_COMMENT_MANIFEST = "\n".join([
     "# A " + "kind" + ": " + "Job here would be rejected by the fleet guard.",
     "apiVersion: apps/v1",
@@ -97,6 +105,12 @@ PINNED_MANIFEST = "\n".join([
     "    spec:",
     "      containers:",
     "        - image: ronaldraygun/spaxel:1.4.2",
+])
+
+LATEST_COMMENT_MANIFEST = "\n".join([
+    "# image: ronaldraygun/spaxel:" + "lat" + "est",
+    "apiVersion: apps/v1",
+    "kind: Deployment",
 ])
 
 KUBECTL_DELETE = "kubectl" + " delete pod worker-0 -n default"
@@ -154,6 +168,13 @@ CASES = [
 ]
 
 
+def supported_cases():
+    """Exclude rules absent from the pre-port live hook under comparison."""
+    if GIT_ADD_RULE:
+        return CASES
+    return [case for case in CASES if case[0] != "git-add-all"]
+
+
 def invoke(payload, state_home=None):
     """Run the hook as Claude Code would: JSON on stdin, decision on stdout.
 
@@ -199,16 +220,48 @@ class Decisions(unittest.TestCase):
     """Rule behaviour. Runs against the live hook and the ported copy alike."""
 
     def test_every_rule_denies_its_fixture(self):
-        for rule_id, _allow, deny_payload in CASES:
+        for rule_id, _allow, deny_payload in supported_cases():
             with self.subTest(rule_id=rule_id):
                 decision, _ = invoke(deny_payload)
                 self.assertTrue(denied(decision), "expected deny for %s" % rule_id)
 
     def test_every_rule_allows_its_near_miss(self):
-        for rule_id, allow_payload, _deny in CASES:
+        for rule_id, allow_payload, _deny in supported_cases():
             with self.subTest(rule_id=rule_id):
                 decision, _ = invoke(allow_payload)
                 self.assertFalse(denied(decision), "expected allow for %s" % rule_id)
+
+    def test_allowed_pretooluse_calls_are_silent(self):
+        """PreToolUse allows are represented by no output, not an empty or
+        malformed decision object that Claude Code might interpret differently."""
+        for rule_id, allow_payload, _deny in supported_cases():
+            with self.subTest(rule_id=rule_id):
+                decision, _ = invoke(allow_payload)
+                self.assertIsNone(decision)
+
+    def test_k8s_batch_rule_denies_both_job_kinds(self):
+        for kind, manifest in (("Job", JOB_MANIFEST), ("CronJob", CRONJOB_MANIFEST)):
+            with self.subTest(kind=kind):
+                decision, _ = invoke(write("k8s/batch.yaml", manifest))
+                self.assertTrue(denied(decision))
+
+    def test_latest_tag_in_a_comment_is_allowed(self):
+        decision, _ = invoke(write("docs/deploy.yaml", LATEST_COMMENT_MANIFEST))
+        self.assertFalse(denied(decision))
+
+    def test_each_denial_has_the_pretooluse_protocol_shape(self):
+        """Every rule must return Claude Code's deny envelope and exit cleanly."""
+        for rule_id, _allow, deny_payload in supported_cases():
+            with self.subTest(rule_id=rule_id):
+                decision, _ = invoke(deny_payload)
+                self.assertEqual(set(decision), {"hookSpecificOutput"})
+                output = decision["hookSpecificOutput"]
+                self.assertEqual(set(output), {
+                    "hookEventName", "permissionDecision", "permissionDecisionReason",
+                })
+                self.assertEqual(output["hookEventName"], "PreToolUse")
+                self.assertEqual(output["permissionDecision"], "deny")
+                self.assertTrue(output["permissionDecisionReason"])
 
     def test_garbage_input_fails_open(self):
         for payload in ("not json", "[1, 2]", "{}", {"tool_name": "Bash"},
@@ -240,12 +293,14 @@ class Decisions(unittest.TestCase):
         decision, _ = invoke(bash("git" + " commit --amend -m 'typo'"))
         self.assertFalse(denied(decision))
 
+    @unittest.skipUnless(GIT_ADD_RULE, "live hook predates the blanket git-add rule")
     def test_git_add_blanket_forms_are_denied(self):
         for command in (ADD_ALL_SHORT, ADD_DOT, ADD_ALL_LONG):
             with self.subTest(command=command):
                 decision, _ = invoke(bash(command))
                 self.assertTrue(denied(decision))
 
+    @unittest.skipUnless(GIT_ADD_RULE, "live hook predates the blanket git-add rule")
     def test_git_add_explicit_path_is_allowed(self):
         decision, _ = invoke(bash(ADD_SCOPED))
         self.assertFalse(denied(decision))
@@ -264,8 +319,16 @@ class DenialLog(unittest.TestCase):
         records = log_records(log_path)
         self.assertEqual(len(records), 1)
 
+    def test_each_denial_writes_one_matching_line(self):
+        for rule_id, _allow, deny_payload in supported_cases():
+            with self.subTest(rule_id=rule_id):
+                _decision, log_path = invoke(deny_payload)
+                records = log_records(log_path)
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0]["rule_id"], rule_id)
+
     def test_allow_writes_nothing(self):
-        for rule_id, allow_payload, _deny in CASES:
+        for rule_id, allow_payload, _deny in supported_cases():
             with self.subTest(rule_id=rule_id):
                 _decision, log_path = invoke(allow_payload)
                 self.assertEqual(log_records(log_path), [])
@@ -287,7 +350,7 @@ class DenialLog(unittest.TestCase):
         self.assertRegex(record["ts"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
     def test_every_logged_rule_id_is_a_declared_slug(self):
-        for rule_id, _allow, deny_payload in CASES:
+        for rule_id, _allow, deny_payload in supported_cases():
             with self.subTest(rule_id=rule_id):
                 _decision, log_path = invoke(deny_payload)
                 (record,) = log_records(log_path)
@@ -296,10 +359,10 @@ class DenialLog(unittest.TestCase):
 
     def test_denials_accumulate_across_calls(self):
         sh = tempfile.mkdtemp(prefix="org-rule-guard-test-")
-        for rule_id, _allow, deny_payload in CASES:
+        for rule_id, _allow, deny_payload in supported_cases():
             invoke(deny_payload, state_home=sh)
         records = log_records(os.path.join(sh, "org-rule-guard", "denials.jsonl"))
-        self.assertEqual(len(records), len(CASES))
+        self.assertEqual(len(records), len(supported_cases()))
 
     def test_credential_rule_logs_the_pattern_name_only(self):
         _decision, log_path = invoke(CASES[4][2])

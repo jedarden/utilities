@@ -137,10 +137,10 @@ defaulting to this copy — the same fixtures prove the port matches the live
 hook and that the log behaves:
 
 ```bash
-# decisions + log + installer, against the ported copy   (40 tests)
+# decisions + log + installer, against the ported copy   (45 tests)
 python3 -m unittest discover -s ~/utilities/org-rule-guard/hooks
 
-# same suite, against the live hook                      (23 tests, 15 skipped)
+# same suite, against the live hook                      (27 tests, 18 skipped)
 ORG_RULE_GUARD_UNDER_TEST=~/.claude/hooks/org-rule-guard.py \
   python3 -m unittest discover -s ~/utilities/org-rule-guard/hooks
 ```
