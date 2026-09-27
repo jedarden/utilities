@@ -154,6 +154,30 @@ class FindCredential(unittest.TestCase):
 class HookProcess(unittest.TestCase):
     """End to end, through stdin/stdout, as the harness invokes it."""
 
+    def test_high_signal_credentials_denied_for_every_supported_tool(self):
+        aws_key = "AKIA" + "ABCDEFGHJKLMNPQRSTUVWXYZ2345"[:16]
+        cases = (
+            ("Write", {"file_path": "/tmp/notes.md",
+                        "content": "token = " + token("ghp_", 40)},
+             "GitHub token"),
+            ("Edit", {"file_path": "/tmp/config.py", "old_string": "x",
+                       "new_string": "token = " + token("glpat-", 24)},
+             "GitLab token"),
+            ("MultiEdit", {"file_path": "/tmp/config.py", "edits": [
+                {"old_string": "x", "new_string": "access_key = " + aws_key}]},
+             "AWS access key id"),
+            ("Bash", {"command": "bao kv put secret/app token="
+                      + token("hvs.", 28)},
+             "Vault/OpenBao token"),
+        )
+        for tool, tool_input, label in cases:
+            with self.subTest(tool=tool):
+                result = run_hook({"tool_name": tool, "tool_input": tool_input})
+                self.assertTrue(denied(result))
+                self.assertIn(label,
+                              result["hookSpecificOutput"][
+                                  "permissionDecisionReason"])
+
     def test_write_with_token_denied(self):
         r = run_hook({"tool_name": "Write", "tool_input": {
             "file_path": "/tmp/notes.md",
@@ -218,6 +242,21 @@ class HookProcess(unittest.TestCase):
                  + token("npm_", 36) + "  # gitleaks:allow"}]}),
             ("Bash", {"command": "printf '%s\\n' '" + token("ghp_")
                        + "' # gitleaks:allow"}),
+        )
+        for tool, tool_input in cases:
+            with self.subTest(tool=tool):
+                self.assertIsNone(run_hook({"tool_name": tool, "tool_input": tool_input}))
+
+    def test_ordinary_non_secret_content_allowed_for_every_supported_tool(self):
+        cases = (
+            ("Write", {"file_path": "/tmp/notes.md",
+                        "content": "Document the deployment checklist."}),
+            ("Edit", {"file_path": "/tmp/config.py", "old_string": "x",
+                       "new_string": "timeout = 30"}),
+            ("MultiEdit", {"file_path": "/tmp/config.py", "edits": [
+                {"old_string": "debug = false", "new_string": "debug = true"},
+                {"old_string": "port = 80", "new_string": "port = 8080"}]}),
+            ("Bash", {"command": "printf '%s\\n' 'deployment complete'"}),
         )
         for tool, tool_input in cases:
             with self.subTest(tool=tool):
