@@ -58,6 +58,19 @@ second waits and rereads the first result, preserving both hook entries and
 unrelated settings. Manual writers that do not honor the same advisory lock
 must not edit the file during a wire; their races are outside this guarantee.
 
+The lock file is created lazily with mode `0600` (and is corrected to that
+mode if it already exists). The kernel lock belongs to the wiring process, not
+to the pathname: normal exit, an exception, or a crash releases it, while the
+empty `.lock` file may remain. A leftover lock file is stale metadata, not a
+permanent block; a later `--wire` opens and acquires it normally. A wire that
+cannot create the lock, or cannot acquire it within 30 seconds, prints a
+refusal to stderr, exits nonzero, and does not modify the settings file. Set
+`CLAUDE_SETTINGS_LOCK_TIMEOUT` to a different positive number when an
+environment needs a different finite deadline; waiting is never indefinite.
+`--uninstall` uses the same lock and deadline before removing the lock file,
+then removes it if present. If the lock cannot be acquired or removed,
+uninstall aborts before removing installed files.
+
 `CLAUDE_SETTINGS` defaults to `~/.claude/settings.json` and is used literally
 for `--wire`. An absolute value is used as an absolute path. A relative value
 is resolved against the installer's current working directory, not against the

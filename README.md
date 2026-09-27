@@ -89,6 +89,19 @@ entries and unrelated settings are preserved. Manual editors or other writers
 that do not honor the same advisory lock must not modify the file during a
 wire; their edits are outside this serialization guarantee.
 
+The lock file is created lazily with mode `0600` (and is corrected to that
+mode if it already exists). The kernel lock belongs to the wiring process, not
+to the pathname: normal exit, an exception, or a crash releases it, while the
+empty `.lock` file may remain. A leftover lock file is stale metadata, not a
+permanent block; a later `--wire` opens and acquires it normally. A wire that
+cannot create the lock, or cannot acquire it within 30 seconds, prints a
+refusal to stderr, exits nonzero, and does not modify the settings file. Set
+`CLAUDE_SETTINGS_LOCK_TIMEOUT` to a different positive number when an
+environment needs a different finite deadline; waiting is never indefinite.
+`--uninstall` uses the same lock and deadline before removing the lock file,
+then removes it if present. If the lock cannot be acquired or removed,
+uninstall aborts before removing installed files.
+
 The `.bak` is a permanent, one-time pre-wiring snapshot, not a rolling backup:
 `--wire` and `--uninstall` never rewrite or remove an existing one. To inspect
 what wiring changed, compare it with the live file:

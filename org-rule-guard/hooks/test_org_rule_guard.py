@@ -729,6 +729,30 @@ class Install(unittest.TestCase):
             self.assertEqual(proc.returncode, 0,
                              stderr.decode() + stdout.decode())
 
+    def hold_settings_lock(self):
+        code = """import fcntl
+import os
+import sys
+import time
+
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+print("ready", flush=True)
+time.sleep(60)
+"""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", code, self.settings + ".lock"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        ready = proc.stdout.readline().decode().strip()
+        proc.stdout.close()
+        proc.stderr.close()
+        if ready != "ready":
+            proc.kill()
+            proc.wait()
+        self.assertEqual(ready, "ready")
+        return proc
+
     def test_first_install_copies_the_hook_and_leaves_settings_alone(self):
         out = self.run_install()
         self.assertTrue(os.path.exists(self.dst()), out)
@@ -822,6 +846,57 @@ class Install(unittest.TestCase):
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.dst())
         self.assertFalse(os.path.exists(self.settings + ".bak"), out)
+
+    def test_wire_creates_a_private_persistent_lock_file(self):
+        previous_umask = os.umask(0)
+        try:
+            self.run_install("--wire")
+        finally:
+            os.umask(previous_umask)
+
+        lock_path = self.settings + ".lock"
+        self.assertTrue(os.path.exists(lock_path))
+        self.assertEqual(stat.S_IMODE(os.stat(lock_path).st_mode), 0o600)
+
+    def test_wire_recovers_after_the_previous_lock_holder_dies(self):
+        holder = self.hold_settings_lock()
+        try:
+            holder.kill()
+            holder.wait(timeout=10)
+            out = self.run_install("--wire")
+        finally:
+            if holder.poll() is None:
+                holder.kill()
+                holder.wait()
+        self.assertIn("wired", out)
+        self.assertTrue(os.path.exists(self.settings + ".lock"), out)
+
+    def test_wire_times_out_when_the_settings_lock_is_held(self):
+        original = b'{"model": "keep"}\n'
+        with open(self.settings, "wb") as fh:
+            fh.write(original)
+        holder = self.hold_settings_lock()
+        try:
+            env = dict(self.env, CLAUDE_SETTINGS_LOCK_TIMEOUT="0.2")
+            result = self.run_install_raw("--wire", env=env)
+        finally:
+            if holder.poll() is None:
+                holder.kill()
+            holder.wait()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not acquire settings lock", result.stderr.decode())
+        self.assertIn("within 0.2 seconds", result.stderr.decode())
+        with open(self.settings, "rb") as fh:
+            self.assertEqual(fh.read(), original)
+
+    def test_wire_fails_cleanly_when_the_lock_path_cannot_be_opened(self):
+        os.mkdir(self.settings + ".lock")
+
+        result = self.run_install_raw("--wire")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not create settings lock", result.stderr.decode())
+        self.assertFalse(os.path.exists(self.settings))
 
     def test_wire_refreshes_the_old_shipped_matcher_in_place(self):
         """The pre-MultiEdit release's shipped entry is safe to upgrade."""
@@ -1154,9 +1229,11 @@ class Install(unittest.TestCase):
 
     def test_uninstall_removes_the_hook_and_leaves_settings(self):
         self.run_install("--wire")
+        self.assertTrue(os.path.exists(self.settings + ".lock"))
         self.run_install("--uninstall")
         self.assertFalse(os.path.exists(self.dst()))
         self.assertTrue(os.path.exists(self.settings))
+        self.assertFalse(os.path.exists(self.settings + ".lock"))
 
     def test_uninstall_refuses_a_hook_this_copy_did_not_install(self):
         """On a machine still running the pre-port hook, the file at the

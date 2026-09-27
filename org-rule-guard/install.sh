@@ -6,7 +6,8 @@
 #   ./install.sh --wire         install (overwriting) and merge/upgrade the
 #                               PreToolUse entry into ~/.claude/settings.json
 #   ./install.sh --wire --force replace customized wiring fields too
-#   ./install.sh --uninstall    remove the installed hook (settings left alone)
+#   ./install.sh --uninstall    remove the installed hook and settings lock
+#                               (settings left alone)
 #
 # The credential guard is a pinned install-time bundle.  The source lives in
 # agent-secrets in this checkout, but the installed copy lives under this
@@ -49,8 +50,79 @@ case "${1:-}" in
       echo "            and a hand-edited bundle may be live enforcement. Pass --force." >&2
       exit 1
     fi
+    python3 - "$SETTINGS" <<'PY'
+import errno
+import fcntl
+import math
+import os
+import sys
+import time
+
+requested_path = sys.argv[1]
+path = os.path.realpath(requested_path)
+lock_path = path + ".lock"
+lock_timeout = 30.0
+raw_timeout = os.environ.get("CLAUDE_SETTINGS_LOCK_TIMEOUT")
+if raw_timeout is not None:
+    try:
+        lock_timeout = float(raw_timeout)
+    except ValueError:
+        print("install.sh: refusing to uninstall: "
+              "CLAUDE_SETTINGS_LOCK_TIMEOUT must be a positive number",
+              file=sys.stderr)
+        raise SystemExit(1)
+    if not math.isfinite(lock_timeout) or lock_timeout <= 0:
+        print("install.sh: refusing to uninstall: "
+              "CLAUDE_SETTINGS_LOCK_TIMEOUT must be a positive number",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+try:
+    lock_fd = os.open(lock_path, os.O_RDWR)
+except FileNotFoundError:
+    lock_fd = None
+except OSError as exc:
+    print(f"install.sh: refusing to uninstall: could not open settings lock "
+          f"{lock_path}: {exc}; installed files were not removed",
+          file=sys.stderr)
+    raise SystemExit(1)
+
+if lock_fd is not None:
+    try:
+        os.fchmod(lock_fd, 0o600)
+        deadline = time.monotonic() + lock_timeout
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    print(f"install.sh: refusing to uninstall: could not "
+                          f"acquire settings lock {lock_path} within "
+                          f"{lock_timeout:g} seconds; installed files were "
+                          "not removed", file=sys.stderr)
+                    raise SystemExit(1)
+                time.sleep(min(0.05, remaining))
+        try:
+            os.unlink(lock_path)
+        except FileNotFoundError:
+            pass
+    except OSError as exc:
+        print(f"install.sh: refusing to uninstall: could not remove settings "
+              f"lock {lock_path}: {exc}; installed files were not removed",
+              file=sys.stderr)
+        raise SystemExit(1)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+PY
     rm -f "$HOOK_DST" "$BUNDLE_DST"
-    echo "removed $HOOK_DST and $BUNDLE_DST (settings.json and ${XDG_STATE_HOME:-$HOME/.local/state}/{org-rule-guard,credential-guard} logs untouched)"
+    echo "removed $HOOK_DST and $BUNDLE_DST (settings.json and ${XDG_STATE_HOME:-$HOME/.local/state}/{org-rule-guard,credential-guard} logs untouched; settings lock removed if present)"
     exit 0 ;;
 esac
 
@@ -90,13 +162,16 @@ echo "credential ${XDG_STATE_HOME:-$HOME/.local/state}/credential-guard/denials.
 
 if [ "$wire" -eq 1 ]; then
   python3 - "$SETTINGS" "$HOOK_DST" "$force" <<'PY'
+import errno
 import fcntl
 import json
+import math
 import os
 import shutil
 import stat
 import sys
 import tempfile
+import time
 requested_path, hook, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 # Resolve aliases before taking the lock or replacing the file.  In
 # particular, os.replace() would otherwise replace a final-component symlink
@@ -113,6 +188,58 @@ if not os.path.isdir(settings_dir):
     print(f"install.sh: refusing to wire {requested_path}: settings parent "
           f"directory does not exist: {settings_dir}", file=sys.stderr)
     raise SystemExit(1)
+
+lock_timeout = 30.0
+raw_timeout = os.environ.get("CLAUDE_SETTINGS_LOCK_TIMEOUT")
+if raw_timeout is not None:
+    try:
+        lock_timeout = float(raw_timeout)
+    except ValueError:
+        print("install.sh: refusing to wire "
+              f"{requested_path}: CLAUDE_SETTINGS_LOCK_TIMEOUT must be a "
+              "positive number; settings file was not modified",
+              file=sys.stderr)
+        raise SystemExit(1)
+    if not math.isfinite(lock_timeout) or lock_timeout <= 0:
+        print("install.sh: refusing to wire "
+              f"{requested_path}: CLAUDE_SETTINGS_LOCK_TIMEOUT must be a "
+              "positive number; settings file was not modified",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+def acquire_settings_lock():
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        os.fchmod(fd, 0o600)
+    except OSError as exc:
+        if "fd" in locals():
+            os.close(fd)
+        print(f"install.sh: refusing to wire {requested_path}: could not "
+              f"create settings lock {lock_path}: {exc}; settings file was "
+              "not modified", file=sys.stderr)
+        raise SystemExit(1)
+
+    deadline = time.monotonic() + lock_timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                os.close(fd)
+                print(f"install.sh: refusing to wire {requested_path}: could "
+                      f"not acquire settings lock {lock_path}: {exc}; "
+                      "settings file was not modified", file=sys.stderr)
+                raise SystemExit(1)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                os.close(fd)
+                print(f"install.sh: refusing to wire {requested_path}: could "
+                      f"not acquire settings lock {lock_path} within "
+                      f"{lock_timeout:g} seconds; settings file was not "
+                      "modified", file=sys.stderr)
+                raise SystemExit(1)
+            time.sleep(min(0.05, remaining))
 
 def snapshot_backup():
     backup = path + ".bak"
@@ -134,10 +261,8 @@ def refuse_invalid_settings(reason):
           "settings file was not modified", file=sys.stderr)
     raise SystemExit(1)
 
-with open(lock_path, "a+") as lock:
-    os.chmod(lock_path, stat.S_IRUSR | stat.S_IWUSR)
-    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-
+lock_fd = acquire_settings_lock()
+try:
     s = {}
     source_mode = None
     if os.path.exists(path):
@@ -232,6 +357,11 @@ with open(lock_path, "a+") as lock:
                 except FileNotFoundError:
                     pass
         print(f"wired      {requested_path}")
+finally:
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
 PY
 else
   echo
