@@ -15,8 +15,10 @@ under test is usually installed on the machine editing this file, and it
 would (correctly) refuse to write a real-looking token into it.
 """
 import importlib.util
+import inspect
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -26,6 +28,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.environ.get("CREDENTIAL_GUARD_UNDER_TEST") or os.path.join(HERE, "credential-guard.py")
+PATTERN_DOC = os.path.join(HERE, os.pardir, "docs", "credential-patterns.md")
 
 _CLEANUP = []
 
@@ -79,6 +82,42 @@ def run_hook(payload, env=None):
 
 def denied(result):
     return bool(result) and result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def _documented_table_rows(table_header):
+    """Read the code-valued rows in one table from the pattern inventory."""
+    with open(PATTERN_DOC, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    try:
+        header = lines.index(table_header)
+    except ValueError as error:
+        raise AssertionError(
+            f"credential pattern inventory is missing table {table_header!r}"
+        ) from error
+
+    row = re.compile(
+        r"^\|\s*([^|]+?)\s*\|\s*`([^`]+)`\s*(?:\|.*)?$"
+    )
+    rows = []
+    for line in lines[header + 1:]:
+        if not line.startswith("|"):
+            break
+        match = row.fullmatch(line)
+        if match:
+            rows.append((match.group(1), match.group(2)))
+    return rows
+
+
+def documented_builtin_patterns():
+    return _documented_table_rows(
+        "| Label | Regex | Minimum shape / context |"
+    )
+
+
+def documented_exemptions():
+    return _documented_table_rows(
+        "| Exemption | Executable definition |"
+    )
 
 
 class FindCredential(unittest.TestCase):
@@ -153,6 +192,37 @@ class FindCredential(unittest.TestCase):
         with open(p, "w") as fh:
             fh.write("{not json")
         self.assertEqual(len(guard.load_patterns(p)), len(guard.BUILTIN_PATTERNS))
+
+
+class DocumentationSync(unittest.TestCase):
+    """Keep the human-readable inventory tied to executable matcher rules."""
+
+    def test_documented_builtin_patterns_match_hook(self):
+        expected = [
+            (label, pattern)
+            for label, pattern, _window in guard.BUILTIN_PATTERNS
+        ]
+        self.assertEqual(documented_builtin_patterns(), expected)
+
+    def test_documented_exemptions_match_hook(self):
+        documented = documented_exemptions()
+        self.assertEqual(
+            [label for label, _definition in documented],
+            [
+                "Placeholder regex",
+                "Repeated-character body",
+                "Fixture line marker",
+            ],
+        )
+        definitions = dict(documented)
+        self.assertEqual(definitions["Placeholder regex"], guard.PLACEHOLDER.pattern)
+        self.assertIn(
+            definitions["Repeated-character body"],
+            inspect.getsource(guard.is_placeholder),
+        )
+        self.assertEqual(
+            definitions["Fixture line marker"], guard.GITLEAKS_ALLOW_MARKER
+        )
 
 
 class HookProcess(unittest.TestCase):

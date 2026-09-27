@@ -3,7 +3,10 @@
 This document is the human-readable companion to
 [`hooks/credential-guard.py`](../hooks/credential-guard.py). The
 `BUILTIN_PATTERNS` tuple in that file is the executable source of truth; this
-inventory must be updated in the same change whenever that tuple changes.
+inventory must be updated in the same change whenever that tuple changes. The
+credential-guard unittest suite compares the exact labels and regexes below
+with the tuple, and also checks the exemption table, so documentation drift
+fails the normal regression gate.
 
 ## What counts as high-signal
 
@@ -50,6 +53,18 @@ past the match for a placeholder. The regexes use Python's `re` syntax.
 | Vault/OpenBao token | `\bhv[sbr]\.[A-Za-z0-9_-]{24,}` | Known `hv*.` prefix plus at least 24 body characters; no look-ahead |
 | PEM private key header | `-{5}BEGIN (?:[A-Z]+ )?PRIVATE KEY-{5}` | Header match; inspect the next 200 characters for a placeholder |
 
+## Exemptions
+
+These executable definitions are checked against the matcher implementation as
+part of the same documentation-drift regression check. Keep the code-valued
+cells exact when changing the exemption behavior.
+
+| Exemption | Executable definition |
+|---|---|
+| Placeholder regex | `replace|example|your|dummy|placeholder|redact|changeme|todo|xxxx|\.\.\.` |
+| Repeated-character body | `len(set(body)) <= 1` |
+| Fixture line marker | `gitleaks:allow` |
+
 The length floors are conservative by design. They are not claims that every
 provider's credential has exactly that width; they are the minimums used to
 avoid blocking token-type prose and short examples. The matcher returns the
@@ -93,10 +108,13 @@ path in one commit:
    PEM body placeholder check.
 3. Add runtime-built positive and placeholder/fixture cases to
    `hooks/test_credential_guard.py`. Do not put a real-looking credential
-   literal in source; construct test values from fragments.
+   literal in source; construct test values from fragments. If the change
+   alters an exemption, update the matching row in the **Exemptions** table.
 4. Update this inventory table and the README's supported-shape summary in
-   the same commit. If the change is part of a released utility version, add
-   a concise entry to `CHANGELOG.md` and publish a new `agent-secrets/vX.Y.Z`
+   the same commit. The documentation-drift tests compare both tables with
+   the hook, so an intentional source change and its documentation update must
+   land together. If the change is part of a released utility version, add a
+   concise entry to `CHANGELOG.md` and publish a new `agent-secrets/vX.Y.Z`
    tag rather than silently changing an installed hook.
 5. Run the hook suite and review false-positive behavior before release:
 

@@ -87,6 +87,7 @@ PLACEHOLDER = re.compile(
     r"replace|example|your|dummy|placeholder|redact|changeme|todo|xxxx|\.\.\.",
     re.I,
 )
+GITLEAKS_ALLOW_MARKER = "gitleaks:allow"
 EXTRA_PATTERNS_FILE = os.path.join(
     os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
     "credential-guard", "patterns.json",
@@ -246,7 +247,7 @@ def find_credential(body, patterns=None):
             start = body.rfind("\n", 0, m.start()) + 1
             end = body.find("\n", m.end())
             line = body[start:end if end != -1 else len(body)]
-            if "gitleaks:allow" in line:
+            if GITLEAKS_ALLOW_MARKER in line:
                 continue
             return label, m.group(0)
     return None
