@@ -1040,7 +1040,7 @@ time.sleep(60)
                 self.assertEqual(len(completed["padding"]), 64 * 1024 * 1024)
                 self.assertEqual(self.settings_temp_files(settings, utility), [])
 
-    def test_wire_preserves_live_settings_permissions(self):
+    def test_wire_preserves_live_settings_permissions_at_mode_0600(self):
         with open(self.settings, "w") as fh:
             json.dump({"model": "opus"}, fh)
         os.chmod(self.settings, 0o600)
@@ -1048,6 +1048,19 @@ time.sleep(60)
         self.run_install("--wire")
 
         self.assertEqual(stat.S_IMODE(os.stat(self.settings).st_mode), 0o600)
+
+    def test_wire_preserves_live_settings_permissions_at_mode_0644_with_custom_path(self):
+        settings = os.path.join(self.root, "custom", "settings.json")
+        os.makedirs(os.path.dirname(settings))
+        with open(settings, "w") as fh:
+            json.dump({"model": "opus"}, fh)
+        os.chmod(settings, 0o644)
+
+        env = dict(self.env, CLAUDE_SETTINGS=settings)
+        result = self.run_install_raw("--wire", env=env)
+
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(stat.S_IMODE(os.stat(settings).st_mode), 0o644)
 
     def test_concurrent_wires_preserve_both_installers_and_settings(self):
         with open(self.settings, "w") as fh:
