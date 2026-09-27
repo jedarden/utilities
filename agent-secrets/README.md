@@ -6,7 +6,7 @@ alone:
 
 | Part | What it does |
 |---|---|
-| `hooks/credential-guard.py` | Claude Code `PreToolUse` hook. Denies any Write / Edit / MultiEdit / Bash call whose body carries a high-signal credential shape (GitHub, GitLab, npm, AWS, Google, Slack, Stripe, Anthropic, OpenAI, Vault/OpenBao tokens, PEM private keys). Fails open. |
+| `hooks/credential-guard.py` | Claude Code `PreToolUse` hook. Denies any Write / Edit / MultiEdit / Bash call whose body carries a high-signal credential shape (GitHub, GitLab, npm, AWS, Google, Slack, Stripe, Anthropic, OpenAI, Vault/OpenBao tokens, PEM private keys). Fails open. The [pattern inventory and update process](docs/credential-patterns.md) are part of this utility's contract. |
 | `bin/bao-as` | `bao-as <instance> <command...>` — AppRole login to one named OpenBao/Vault instance with credentials passed as `@file`, then `exec` the command with the token only in its environment. |
 | `policies/*.hcl` | Prefix-scoped policy templates: one agent ↔ one prefix, writer, reader, and the superuser carve-outs that deny `sys/audit*` and `sys/seal`. |
 
@@ -120,6 +120,12 @@ What it does **not** do, and you should know:
   ```json
   [{"label": "Acme API key", "pattern": "\\bacme_[A-Za-z0-9]{32}"}]
   ```
+
+The built-in labels, exact regexes, definition of “high-signal,” and the
+maintenance path for adding a new credential family are documented in the
+[credential-guard pattern inventory](docs/credential-patterns.md). Keep that
+document synchronized with `hooks/credential-guard.py` when changing the
+matcher.
 
 Pair it with a server-side secret scan on your git host (Forgejo/Gitea
 `pre-receive`, GitHub push protection, gitleaks). Two independent detectors

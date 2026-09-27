@@ -56,7 +56,10 @@ tool; nothing shared between folders except the license and this plan.
 
 - `hooks/credential-guard.py` — Claude Code PreToolUse hook. Denies Write,
   Edit, MultiEdit and Bash calls whose body carries a high-signal credential
-  value. Fails open. Placeholders and `gitleaks:allow` pass.
+  value. Fails open. Placeholders and `gitleaks:allow` pass. Its built-in
+  pattern inventory, high-signal definition, and update process live in
+  [`agent-secrets/docs/credential-patterns.md`](../../agent-secrets/docs/credential-patterns.md)
+  and must stay synchronized with the hook source.
 - `hooks/test_credential_guard.py` — unittest suite; fixtures are built at
   runtime so the test file itself never contains a token-shaped literal. It
   covers the built-in matcher, denied Write/Edit/MultiEdit/Bash calls,
