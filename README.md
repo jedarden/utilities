@@ -49,6 +49,22 @@ git push origin main <utility>/vX.Y.Z
 
 Pushing the VERSION bump without its matching tag fails the CI version gate.
 
+## Bead checkpoint workflow
+
+After any bead mutation, flush the durable checkpoint and commit every
+changed path under `.beads/checkpoint/`:
+
+```bash
+bead sync flush-only
+git status --short -- .beads/checkpoint
+git add .beads/checkpoint
+git commit -m "chore(beads): publish checkpoint"
+```
+
+At the end of the bead-mutating session, run
+`git status --short -- .beads/checkpoint` again and require no output. Do not
+pull while that check is dirty; flush and commit the checkpoint first.
+
 ## Runtime constraints
 
 The structural gate scans utility-owned runtime files. Shell scripts must
