@@ -71,7 +71,8 @@ upgrade):
 
 The uninstaller removes the hook and `bao-as` only when they still match this
 checkout, refusing a hand-edited or unknown copy unless `--force` is supplied.
-It intentionally leaves `settings.json` and `~/.config/bao-as/` untouched.
+It intentionally leaves `settings.json`, `~/.config/bao-as/`, and the
+credential denial log untouched.
 After uninstalling, remove this utility's `PreToolUse` command from
 `settings.json` yourself; keep the entry if another installed copy still uses
 that same destination. The source checkout can then be deleted if it is no
@@ -148,11 +149,41 @@ example, or run both installers' `--wire` modes against the same settings file.
 Claude Code runs matching `PreToolUse` handlers in parallel, and a deny wins
 over an allow. Therefore the JSON entry order does not establish precedence.
 If both guards recognize one credential, the tool call is blocked once even
-though both handlers may return a deny; the org guard records its one denial
-and this hook does not create a second denial-log record. If this hook is not
+though both handlers may return a deny. Each guard records its own decision:
+`org-rule-guard` writes its redacted-fragment record, while this hook writes a
+property-only record to its own log. This is an expected pair of audit records,
+not two tool executions or two permission prompts. If this hook is not
 installed, the org guard's bundled credential check still runs. If the org
 guard is not installed, this hook still protects credentials but cannot enforce
 the org-specific rules.
+
+### Credential denial log
+
+Every credential denial appends one JSONL record to:
+
+```
+${XDG_STATE_HOME:-~/.local/state}/credential-guard/denials.jsonl
+```
+
+The active log is bounded to 256 KiB with one rotated backup at
+`denials.jsonl.1`; a mode-700 directory, mode-600 log files, and an advisory
+lock keep concurrent hook processes from interleaving records. Each record is
+property-only and contains `ts`, `rule_id`, `tool`, `cwd`, `session_id`, and
+`payload_shape`. The shape is a fixed label such as `Bash.command`,
+`Write.content`, `Edit.new_string`, or `MultiEdit.edits[].new_string`. The
+command, file path, matched text, pattern label, and credential value are never
+written. Logging is best-effort: an unwritable log never turns a deny into an
+allow.
+
+The log can be counted by rule with the same seven-day query used by the org
+guard, changing only the directory:
+
+```bash
+LOG=${XDG_STATE_HOME:-$HOME/.local/state}/credential-guard/denials.jsonl
+jq -r 'select(.ts >= $cutoff) | .rule_id' \
+  --arg cutoff "$(date -u -d '7 days ago' +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v-7d +"%Y-%m-%dT%H:%M:%SZ")" \
+  "$LOG" | sort | uniq -c | sort -rn
+```
 
 ## bao-as
 

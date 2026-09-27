@@ -131,7 +131,7 @@ class HookComposition(unittest.TestCase):
                 )
                 self.assertTrue(denied(result))
 
-    def test_both_hooks_deny_one_credential_without_a_runtime_dependency(self):
+    def test_both_hooks_deny_one_credential_and_record_separately(self):
         payload = write_payload("stored value: " + token(seed=3))
         with tempfile.TemporaryDirectory(prefix="hook-composition-") as directory:
             state_home = Path(directory)
@@ -140,12 +140,20 @@ class HookComposition(unittest.TestCase):
 
             self.assertTrue(denied(org_result))
             self.assertTrue(denied(credential_result))
-            log = state_home / "state" / "org-rule-guard" / "denials.jsonl"
-            with log.open(encoding="utf-8") as handle:
-                records = [json.loads(line) for line in handle if line.strip()]
-            self.assertEqual([record["rule_id"] for record in records], [
+            org_log = state_home / "state" / "org-rule-guard" / "denials.jsonl"
+            credential_log = state_home / "state" / "credential-guard" / "denials.jsonl"
+            with org_log.open(encoding="utf-8") as handle:
+                org_records = [json.loads(line) for line in handle if line.strip()]
+            with credential_log.open(encoding="utf-8") as handle:
+                credential_records = [json.loads(line) for line in handle if line.strip()]
+            self.assertEqual([record["rule_id"] for record in org_records], [
                 "credential-value",
             ])
+            self.assertEqual([record["rule_id"] for record in credential_records], [
+                "credential-value",
+            ])
+            self.assertEqual(credential_records[0]["payload_shape"], "Write.content")
+            self.assertNotIn("stored value: " + token(seed=3), credential_log.read_text())
 
     def test_optional_companion_does_not_change_org_standalone_coverage(self):
         payload = write_payload(

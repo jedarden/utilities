@@ -19,6 +19,11 @@ exits 0 (allow). A blocked agent gets worked around; a fleet wedged by its own
 guard is worse than one missed write. The rule binds the agent regardless of
 whether this hook catches the slip.
 
+Denied calls also append a property-only record to a local JSONL log. The
+record identifies the credential rule, tool, and matched payload shape, never
+the payload or the credential value. Logging is best-effort and never changes
+the deny decision.
+
 What passes:
   * documentation stand-ins -- a token whose body is one repeated character
     (`ghp_xxxxxxxx...`), or that sits next to `example`, `REPLACE`, `your`,
@@ -35,12 +40,26 @@ Wire it in ~/.claude/settings.json (see ../examples/settings.json):
                   "hooks": [{"type": "command",
                              "command": "python3 ~/.claude/hooks/credential-guard.py"}]}]
 """
+import fcntl
 import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 
 ALLOW = 0
+RULE_CREDENTIAL = "credential-value"
+STATE_DIR_ENV = "CREDENTIAL_GUARD_STATE_DIR"
+LOG_NAME = "denials.jsonl"
+ROTATED_LOG_NAME = "denials.jsonl.1"
+LOCK_NAME = "denials.jsonl.lock"
+MAX_LOG_BYTES = 256 * 1024
+MAX_LOG_FIELD_CHARS = 512
+
+# The hook handles one payload per process. Keeping it here avoids threading
+# payload data through the deny API while ensuring the log contains metadata
+# from the same invocation that produced the decision.
+_PAYLOAD = {}
 
 # High-signal shapes only. Every pattern has a vendor prefix AND a length floor
 # at the real token width, so naming a token type in prose never trips it. A
@@ -89,13 +108,121 @@ def load_patterns(extra_file=EXTRA_PATTERNS_FILE):
     return tuple(pats)
 
 
-def deny(reason):
+def deny(reason, tool="", payload_shape="unknown"):
+    try:
+        log_denial(tool, payload_shape)
+    except Exception:
+        pass  # logging is observability only; never change enforcement
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": reason,
     }}))
     sys.exit(0)
+
+
+def state_dir():
+    """Where the credential denial log lives.
+
+    ``CREDENTIAL_GUARD_STATE_DIR`` is a test/operator override. In normal use
+    the XDG state directory keeps this log separate from org-rule-guard's log,
+    which lets operators distinguish the two independent hook decisions.
+    """
+    override = os.environ.get(STATE_DIR_ENV)
+    if override:
+        return override
+    root = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(root, "credential-guard")
+
+
+def _log_value(value):
+    """Keep metadata bounded without ever serializing tool input fields."""
+    if not value:
+        return ""
+    return str(value)[:MAX_LOG_FIELD_CHARS]
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def log_denial(tool, payload_shape):
+    """Append one property-only JSONL record under a rotation lock.
+
+    This function deliberately receives only the fixed shape label, not the
+    matched body. The active file and one rotated backup are bounded so a
+    repeated denial cannot grow the operator's state directory without limit.
+    """
+    payload = _PAYLOAD if isinstance(_PAYLOAD, dict) else {}
+    cwd = payload.get("cwd")
+    if not cwd:
+        try:
+            cwd = os.getcwd()
+        except OSError:
+            cwd = ""
+    record = {
+        "ts": _utcnow(),
+        "rule_id": RULE_CREDENTIAL,
+        "tool": _log_value(tool),
+        "cwd": _log_value(cwd),
+        "session_id": _log_value(payload.get("session_id")),
+        "payload_shape": payload_shape,
+    }
+    directory = state_dir()
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    os.chmod(directory, 0o700)
+    line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+    lock_path = os.path.join(directory, LOCK_NAME)
+    lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        log_path = os.path.join(directory, LOG_NAME)
+        rotated_path = os.path.join(directory, ROTATED_LOG_NAME)
+        try:
+            current_size = os.stat(log_path).st_size
+        except FileNotFoundError:
+            current_size = 0
+        if current_size and current_size + len(line) > MAX_LOG_BYTES:
+            os.replace(log_path, rotated_path)
+            os.chmod(rotated_path, 0o600)
+            _trim_log(rotated_path)
+        fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.chmod(log_path, 0o600)
+            written = os.write(fd, line)
+            if written != len(line):
+                raise OSError("short denial-log write")
+        finally:
+            os.close(fd)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
+
+
+def _trim_log(path):
+    """Keep at most MAX_LOG_BYTES of the newest complete records."""
+    if os.stat(path).st_size <= MAX_LOG_BYTES:
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.lseek(fd, -MAX_LOG_BYTES, os.SEEK_END)
+        data = os.read(fd, MAX_LOG_BYTES)
+    finally:
+        os.close(fd)
+    first_newline = data.find(b"\n")
+    data = data[first_newline + 1:] if first_newline >= 0 else b""
+    fd = os.open(path, os.O_WRONLY | os.O_TRUNC)
+    try:
+        if data:
+            written = os.write(fd, data)
+            if written != len(data):
+                raise OSError("short denial-log trim write")
+    finally:
+        os.close(fd)
 
 
 def is_placeholder(value, context=""):
@@ -152,6 +279,16 @@ def bodies_from(tool, tool_input):
     return out
 
 
+def payload_shape(tool, where):
+    """Turn an internal match location into a value-free schema label."""
+    if tool == "Bash":
+        return "Bash.command"
+    if where.startswith("edit of "):
+        return f"{tool}.edits[].new_string"
+    field = where.split(" for ", 1)[0]
+    return f"{tool}.{field}"
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -163,12 +300,14 @@ def main():
     if not isinstance(tool_input, dict):
         return ALLOW
     tool = payload.get("tool_name") or ""
+    global _PAYLOAD
+    _PAYLOAD = payload
     try:
         patterns = load_patterns()
         for where, body in bodies_from(tool, tool_input):
             hit = find_credential(body, patterns)
             if hit:
-                deny(reason_for(hit[0], where))
+                deny(reason_for(hit[0], where), tool, payload_shape(tool, where))
     except SystemExit:
         raise
     except Exception:

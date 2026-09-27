@@ -128,11 +128,11 @@ not change the org guard's behavior.
 
 If both hooks recognize the same credential, both processes may emit a deny,
 but Claude Code blocks the tool call once. This is an expected duplicate at
-the hook layer, not two tool executions or two permission prompts. Only
-`org-rule-guard` writes the JSONL denial record, so one overlapping call still
-produces one `credential-value` record from this utility. Do not wrap one hook
-inside the other or make either hook convert the other hook's deny into an
-allow.
+the hook layer, not two tool executions or two permission prompts. Each hook
+writes one record to its own log: `org-rule-guard` records its redacted
+fragment, and the credential companion records only properties and a payload
+shape. Do not wrap one hook inside the other or make either hook convert the
+other hook's deny into an allow.
 
 ## Install
 
@@ -169,8 +169,8 @@ git checkout --detach org-rule-guard/vX.Y.Z
 Review and commit any local changes in the source checkout before changing
 tags; `git checkout` will refuse to overwrite uncommitted work. The upgrade
 refreshes both the org hook and its bundled credential guard. It does not
-remove the denial log at
-`${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/`.
+remove either denial log at
+`${XDG_STATE_HOME:-~/.local/state}/{org-rule-guard,credential-guard}/`.
 
 To remove the installed files, run `--uninstall` from the exact release
 checkout that supplied them (or from the currently installed release after an
@@ -182,8 +182,8 @@ upgrade):
 
 The uninstaller removes the org hook and its bundled credential guard only when
 they still match this checkout, refusing a hand-edited or unknown copy unless
-`--force` is supplied. It intentionally leaves `settings.json` and the denial
-log untouched. After uninstalling, remove this utility's `PreToolUse` command
+`--force` is supplied. It intentionally leaves `settings.json` and both denial
+logs untouched. After uninstalling, remove this utility's `PreToolUse` command
 from `settings.json` yourself; keep the entry if another installed copy still
 uses that same destination. The source checkout can then be deleted if it is
 no longer needed.

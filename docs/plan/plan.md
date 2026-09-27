@@ -59,12 +59,17 @@ tool; nothing shared between folders except the license and this plan.
   value. Fails open. Placeholders and `gitleaks:allow` pass. Its built-in
   pattern inventory, high-signal definition, and update process live in
   [`agent-secrets/docs/credential-patterns.md`](../../agent-secrets/docs/credential-patterns.md)
-  and must stay synchronized with the hook source.
+  and must stay synchronized with the hook source. Every denial also appends
+  one bounded JSONL record to `${XDG_STATE_HOME:-~/.local/state}/credential-guard/denials.jsonl`
+  containing only timestamp, rule id, tool, invocation metadata, and a fixed
+  payload-shape label; the matched payload and credential value never enter the
+  log. Logging is best-effort and does not change the enforcement decision.
 - `hooks/test_credential_guard.py` — unittest suite; fixtures are built at
   runtime so the test file itself never contains a token-shaped literal. It
   covers the built-in matcher, denied Write/Edit/MultiEdit/Bash calls,
   placeholder and `gitleaks:allow` pass paths for each tool shape, malformed
-  and unexpected-input fail-open behavior, and the installer contract.
+  and unexpected-input fail-open behavior, property-only denial records and
+  logging failures, and the installer contract.
 - `bin/bao-as` — `bao-as <instance> <command...>`: AppRole login to one
   named OpenBao/Vault instance with credentials passed as `@file`, then
   `exec` the command with the token only in its environment. Refuses to
@@ -155,15 +160,16 @@ tool; nothing shared between folders except the license and this plan.
 
 None. Configuration is files under `~/.config/bao-as/` (instance table and
 per-instance `role_id` / `secret_id`, mode 0600) and an optional
-`~/.config/credential-guard/patterns.json` for extra patterns. The one state
-artifact is `org-rule-guard`'s denial-log directory,
-`${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/`, owned by the user running
-the hook. It contains the mode-600 active `denials.jsonl`, one mode-600
-`denials.jsonl.1` backup, and a mode-600 advisory lock. The active log is capped
-at 256 KiB and rotates to the single backup before an append would cross that
-bound; the two retained JSONL files are therefore capped at 512 KiB in total.
-Concurrent hook processes take the lock across rotation and their single
-`O_APPEND` record write. The hook never reads log records as application data.
+`~/.config/credential-guard/patterns.json` for extra patterns. The state
+artifacts are the two independent denial-log directories,
+`${XDG_STATE_HOME:-~/.local/state}/{org-rule-guard,credential-guard}/`, owned
+by the user running each hook. Each contains a mode-600 active `denials.jsonl`,
+one mode-600 `denials.jsonl.1` backup, and a mode-600 advisory lock. Each active
+log is capped at 256 KiB and rotates to its single backup before an append
+would cross that bound; each pair of retained JSONL files is therefore capped
+at 512 KiB in total. Concurrent hook processes take the relevant lock across
+rotation and their single `O_APPEND` record write. The hooks never read log
+records as application data.
 
 ## Implementation Phases
 

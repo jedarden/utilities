@@ -61,7 +61,11 @@ PEM_HEADER = "-----BEGIN " + "PRIVATE KEY-----"
 def run_hook(payload, env=None):
     """Run the hook as Claude Code would: JSON on stdin, decision on stdout."""
     e = dict(os.environ)
-    e["XDG_CONFIG_HOME"] = tempfile.mkdtemp()   # never pick up the user's extras
+    config_home = tempfile.mkdtemp()
+    state_home = tempfile.mkdtemp()
+    _CLEANUP.extend((config_home, state_home))
+    e["XDG_CONFIG_HOME"] = config_home   # never pick up the user's extras
+    e["XDG_STATE_HOME"] = state_home     # never write the operator's log
     if env:
         e.update(env)
     proc = subprocess.run(
@@ -202,6 +206,71 @@ class HookProcess(unittest.TestCase):
         r = run_hook({"tool_name": "Bash", "tool_input": {
             "command": "curl -H 'Authorization: Bearer " + token("ghp_") + "' https://api.example"}})
         self.assertTrue(denied(r))
+
+    def test_denial_log_records_only_properties_for_each_payload_shape(self):
+        cases = (
+            ("Write", {"file_path": "/tmp/notes.md", "content": "value: " + token("ghp_")},
+             "Write.content"),
+            ("Edit", {"file_path": "/tmp/notes.md", "new_string": "value: " + token("glpat-", 24)},
+             "Edit.new_string"),
+            ("MultiEdit", {"file_path": "/tmp/notes.md", "edits": [
+                {"new_string": "value: " + token("npm_", 36)}]},
+             "MultiEdit.edits[].new_string"),
+            ("Bash", {"command": "printf '%s' '" + token("hvs.", 28) + "'"},
+             "Bash.command"),
+        )
+        for tool, tool_input, shape in cases:
+            with self.subTest(tool=tool):
+                state = tempfile.mkdtemp(prefix="credential-guard-log-")
+                _CLEANUP.append(state)
+                result = run_hook({
+                    "tool_name": tool,
+                    "tool_input": tool_input,
+                    "cwd": "/tmp/credential-guard-test",
+                    "session_id": "session-property-only",
+                }, {"CREDENTIAL_GUARD_STATE_DIR": state})
+                self.assertTrue(denied(result))
+                log_path = os.path.join(state, "denials.jsonl")
+                with open(log_path, encoding="utf-8") as fh:
+                    text = fh.read()
+                records = [json.loads(line) for line in text.splitlines()]
+                self.assertEqual(len(records), 1)
+                self.assertEqual(set(records[0]), {
+                    "ts", "rule_id", "tool", "cwd", "session_id", "payload_shape",
+                })
+                self.assertEqual(records[0]["rule_id"], "credential-value")
+                self.assertEqual(records[0]["tool"], tool)
+                self.assertEqual(records[0]["payload_shape"], shape)
+                self.assertEqual(records[0]["cwd"], "/tmp/credential-guard-test")
+                self.assertEqual(records[0]["session_id"], "session-property-only")
+                values = [tool_input.get("command"), tool_input.get("content"),
+                          tool_input.get("new_string")]
+                for value in values:
+                    if value:
+                        self.assertNotIn(value, text)
+                for edit in tool_input.get("edits", []):
+                    if edit.get("new_string"):
+                        self.assertNotIn(edit["new_string"], text)
+
+    def test_allow_writes_no_denial_record(self):
+        state = tempfile.mkdtemp(prefix="credential-guard-allow-")
+        _CLEANUP.append(state)
+        result = run_hook({"tool_name": "Write", "tool_input": {
+            "file_path": "/tmp/notes.md", "content": "ordinary documentation"}},
+            {"CREDENTIAL_GUARD_STATE_DIR": state})
+        self.assertIsNone(result)
+        self.assertFalse(os.path.exists(os.path.join(state, "denials.jsonl")))
+
+    def test_log_failure_does_not_change_deny(self):
+        state_parent = tempfile.mkdtemp(prefix="credential-guard-log-failure-")
+        _CLEANUP.append(state_parent)
+        state_file = os.path.join(state_parent, "not-a-directory")
+        with open(state_file, "w", encoding="utf-8") as fh:
+            fh.write("operator data")
+        result = run_hook({"tool_name": "Bash", "tool_input": {
+            "command": "printf '%s' '" + token("ghp_") + "'"}},
+            {"CREDENTIAL_GUARD_STATE_DIR": state_file})
+        self.assertTrue(denied(result))
 
     def test_bash_by_reference_allowed(self):
         r = run_hook({"tool_name": "Bash", "tool_input": {
