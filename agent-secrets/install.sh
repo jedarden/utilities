@@ -83,7 +83,7 @@ echo "instances  $CONF_DIR/instances.conf  (edit; put role_id/secret_id under $C
 
 if [ "$mode" = "--wire" ]; then
   python3 - "$SETTINGS" "$HOOK_DST" <<'PY'
-import json, os, sys
+import json, os, shutil, sys
 path, hook = sys.argv[1], sys.argv[2]
 cmd = f"python3 {hook}"
 s = {}
@@ -93,6 +93,10 @@ if os.path.exists(path):
 pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
 present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
 if not present:
+    backup = path + ".bak"
+    if os.path.isfile(path) and not os.path.lexists(backup):
+        shutil.copy2(path, backup)
+        print(f"backup     {backup}")
     pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
                 "hooks": [{"type": "command", "command": cmd}]})
     tmp = path + ".tmp"

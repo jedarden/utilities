@@ -40,8 +40,6 @@ replacement for a user's settings file. To merge both guards into an existing
 
 ```bash
 SETTINGS="$HOME/.claude/settings.json"
-cp "$SETTINGS" "$SETTINGS.bak"
-
 CLAUDE_SETTINGS="$SETTINGS" \
   ~/utilities-org-rule-guard/org-rule-guard/install.sh --wire
 CLAUDE_SETTINGS="$SETTINGS" \
@@ -50,12 +48,16 @@ CLAUDE_SETTINGS="$SETTINGS" \
 
 Each `--wire` run reads the current JSON, preserves every existing top-level
 setting, `hooks` event, and hook entry, then appends only its own
-`PreToolUse` entry when that exact command is not already present. Running the
-two commands again is safe: both installers report `already` and leave the
-settings file unchanged. Do not copy `settings-both.json` over an existing
-file or concatenate the two JSON objects; doing so can discard unrelated
-settings and hooks. If a non-default settings path is used, pass that same
-path through `CLAUDE_SETTINGS` on every run.
+`PreToolUse` entry when that exact command is not already present. Before the
+first run that changes an existing settings file, the installer creates
+`$SETTINGS.bak` if it does not already exist. That backup is the pre-wiring
+file: the second installer and later `--wire` runs leave it untouched. If the
+settings file does not exist yet, the installer creates it without a backup
+because there is no prior file to preserve. Do not rerun a manual `cp` over
+the backup, and do not copy `settings-both.json` over an existing file or
+concatenate the two JSON objects; doing so can discard unrelated settings and
+hooks. If a non-default settings path is used, pass that same path through
+`CLAUDE_SETTINGS` on every run.
 
 ## Structure
 

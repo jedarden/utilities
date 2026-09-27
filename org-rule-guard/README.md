@@ -108,6 +108,13 @@ settings.
 bundle, and merges this same entry. A bare `install.sh` prints it without
 changing settings; it still stages the bundle when it installs.
 
+When `--wire` changes an existing settings file, it creates
+`$CLAUDE_SETTINGS.bak` (or `~/.claude/settings.json.bak`) immediately before
+the first wiring change, but only if that backup does not already exist. The
+backup therefore remains the pre-wiring settings file when another utility is
+wired later or this installer is run again. If the settings file does not yet
+exist, no backup is created because there is no prior file to preserve.
+
 ### Composed execution
 
 The combined configuration has two independent `PreToolUse` entries: the org

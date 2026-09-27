@@ -41,6 +41,13 @@ destination without `--force`. `--wire` is the upgrade mode: it replaces the
 installed hook and `bao-as` with the copies from the selected checkout and
 merges the hook entry into `settings.json`.
 
+When `--wire` changes an existing settings file, it creates
+`$CLAUDE_SETTINGS.bak` (or `~/.claude/settings.json.bak`) immediately before
+the first wiring change, but only if that backup does not already exist. The
+backup therefore remains the pre-wiring settings file when another utility is
+wired later or this installer is run again. If the settings file does not yet
+exist, no backup is created because there is no prior file to preserve.
+
 Python 3 and bash are the only dependencies; `bao-as` additionally needs the
 `bao` (or `vault`, via `BAO_AS_BIN=vault`) CLI.
 

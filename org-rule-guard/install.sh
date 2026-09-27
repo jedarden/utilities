@@ -88,7 +88,7 @@ echo "credential ${XDG_STATE_HOME:-$HOME/.local/state}/credential-guard/denials.
 
 if [ "$mode" = "--wire" ]; then
   python3 - "$SETTINGS" "$HOOK_DST" <<'PY'
-import json, os, sys
+import json, os, shutil, sys
 path, hook = sys.argv[1], sys.argv[2]
 cmd = f"python3 {hook}"
 s = {}
@@ -98,6 +98,10 @@ if os.path.exists(path):
 pre = s.setdefault("hooks", {}).setdefault("PreToolUse", [])
 present = any(h.get("command") == cmd for e in pre for h in e.get("hooks", []))
 if not present:
+    backup = path + ".bak"
+    if os.path.isfile(path) and not os.path.lexists(backup):
+        shutil.copy2(path, backup)
+        print(f"backup     {backup}")
     pre.append({"matcher": "Write|Edit|MultiEdit|Bash",
                 "hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
     tmp = path + ".tmp"

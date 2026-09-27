@@ -694,6 +694,32 @@ class Install(unittest.TestCase):
         self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.hook_dst())
+        self.assertFalse(os.path.exists(self.settings + ".bak"), out)
+
+    def test_wire_snapshots_existing_settings_before_first_change(self):
+        original = b'{"model": "opus", "hooks": {"Stop": []}}\n'
+        with open(self.settings, "wb") as fh:
+            fh.write(original)
+
+        out = self.run_install("--wire")
+
+        self.assertIn("backup", out)
+        with open(self.settings + ".bak", "rb") as fh:
+            self.assertEqual(fh.read(), original)
+
+    def test_wire_preserves_an_existing_settings_backup_on_reruns(self):
+        original = b'{"model": "opus"}\n'
+        sentinel = b"operator-selected baseline\n"
+        with open(self.settings, "wb") as fh:
+            fh.write(original)
+        with open(self.settings + ".bak", "wb") as fh:
+            fh.write(sentinel)
+
+        self.run_install("--wire")
+        self.run_install("--wire")
+
+        with open(self.settings + ".bak", "rb") as fh:
+            self.assertEqual(fh.read(), sentinel)
 
     def test_wire_replaces_an_existing_hook_copy(self):
         self.run_install()
