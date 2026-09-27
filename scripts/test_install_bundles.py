@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path, PurePosixPath
 
@@ -103,6 +104,66 @@ class SelectiveInstallTests(unittest.TestCase):
             text=True,
             timeout=30,
         )
+
+    def hold_settings_lock(self, lock_path):
+        code = """import fcntl
+import os
+import sys
+
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+print("ready", flush=True)
+sys.stdin.read()
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-c", code, str(lock_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        ready = process.stdout.readline().strip()
+        if ready != "ready":
+            process.kill()
+            process.wait()
+            raise AssertionError(
+                "settings lock holder did not become ready: "
+                + process.stderr.read()
+            )
+        return process
+
+    def release_settings_lock(self, process):
+        if process.poll() is None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+
+    def run_concurrent_wire(self, checkout, home, runtime, settings):
+        processes = []
+        for utility in ("org-rule-guard", "agent-secrets"):
+            environment = self.clean_environment(home)
+            environment["CLAUDE_SETTINGS"] = str(settings)
+            processes.append(
+                subprocess.Popen(
+                    ["/bin/sh", str(checkout / utility / "install.sh"), "--wire"],
+                    cwd=runtime,
+                    env=environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            )
+        return processes
 
     def run_installed_hook(self, hook, home, runtime, payload, state):
         env = self.clean_environment(home)
@@ -401,6 +462,158 @@ class SelectiveInstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("already", result.stdout)
         self.assertEqual(settings.read_bytes(), after_first_wire)
+
+    def test_both_installers_conform_to_one_lock_and_merge_concurrently(self):
+        """The independent installers serialize through the same effective lock."""
+        checkout = self.stage_checkout()
+        home = self.temp_dir("cross-utility-wire-home-")
+        runtime = self.temp_dir("cross-utility-wire-runtime-")
+        real_settings = home / "custom" / "settings.json"
+        settings_alias = home / "settings-alias.json"
+        real_settings.parent.mkdir(parents=True)
+        real_settings.write_text(
+            json.dumps(
+                {
+                    "model": "opus",
+                    "permissions": {"allow": ["Read"]},
+                    "hooks": {
+                        "SessionStart": [{
+                            "hooks": [{
+                                "type": "command",
+                                "command": "printf session-start",
+                            }],
+                        }],
+                        "PreToolUse": [{
+                            "matcher": "Read",
+                            "hooks": [{
+                                "type": "command",
+                                "command": "printf existing-pretooluse",
+                            }],
+                        }],
+                        "PostToolUse": [{
+                            "matcher": "Write",
+                            "hooks": [{
+                                "type": "command",
+                                "command": "printf post-tooluse",
+                            }],
+                        }],
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        settings_alias.symlink_to(real_settings)
+        expected_lock = Path(str(real_settings.resolve()) + ".lock")
+        original = real_settings.read_bytes()
+
+        reported_lock_paths = []
+        for utility in ("org-rule-guard", "agent-secrets"):
+            holder = self.hold_settings_lock(expected_lock)
+            try:
+                environment = self.clean_environment(home)
+                environment["CLAUDE_SETTINGS"] = str(settings_alias)
+                environment["CLAUDE_SETTINGS_LOCK_TIMEOUT"] = "0.5"
+                result = subprocess.run(
+                    ["/bin/sh", str(checkout / utility / "install.sh"), "--wire"],
+                    cwd=runtime,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            finally:
+                self.release_settings_lock(holder)
+
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("could not acquire settings lock", result.stderr)
+            lock_message = result.stderr.split(
+                "could not acquire settings lock ", 1
+            )[1]
+            reported_lock_paths.append(lock_message.split(" within", 1)[0])
+            self.assertEqual(real_settings.read_bytes(), original)
+
+        self.assertEqual(reported_lock_paths, [str(expected_lock)] * 2)
+
+        holder = self.hold_settings_lock(expected_lock)
+        processes = self.run_concurrent_wire(
+            checkout, home, runtime, settings_alias
+        )
+        try:
+            time.sleep(0.2)
+            self.assertTrue(
+                any(process.poll() is None for process in processes),
+                "neither installer remained blocked on the shared settings lock",
+            )
+            self.release_settings_lock(holder)
+            holder = None
+            results = [process.communicate(timeout=30) for process in processes]
+        finally:
+            if holder is not None:
+                self.release_settings_lock(holder)
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+        for process, result in zip(processes, results):
+            self.assertEqual(process.returncode, 0, result[1] + result[0])
+
+        merged = json.loads(real_settings.read_text(encoding="utf-8"))
+        self.assertEqual(merged["model"], "opus")
+        self.assertEqual(merged["permissions"], {"allow": ["Read"]})
+        self.assertEqual(
+            merged["hooks"]["SessionStart"],
+            [{"hooks": [{"type": "command", "command": "printf session-start"}]}],
+        )
+        self.assertEqual(
+            merged["hooks"]["PostToolUse"],
+            [{
+                "matcher": "Write",
+                "hooks": [{"type": "command", "command": "printf post-tooluse"}],
+            }],
+        )
+        pretooluse = merged["hooks"]["PreToolUse"]
+        self.assertEqual(pretooluse[0]["hooks"][0]["command"], "printf existing-pretooluse")
+        entries = {
+            entry["hooks"][0]["command"]: entry
+            for entry in pretooluse[1:]
+        }
+        self.assertEqual(
+            set(entries),
+            {
+                f"python3 {home / '.claude/hooks/org-rule-guard.py'}",
+                f"python3 {home / '.claude/hooks/credential-guard.py'}",
+            },
+        )
+        self.assertEqual(
+            entries[f"python3 {home / '.claude/hooks/org-rule-guard.py'}"],
+            {
+                "matcher": "Write|Edit|MultiEdit|Bash",
+                "hooks": [{
+                    "type": "command",
+                    "command": f"python3 {home / '.claude/hooks/org-rule-guard.py'}",
+                    "timeout": 10,
+                }],
+            },
+        )
+        self.assertEqual(
+            entries[f"python3 {home / '.claude/hooks/credential-guard.py'}"],
+            {
+                "matcher": "Write|Edit|MultiEdit|Bash",
+                "hooks": [{
+                    "type": "command",
+                    "command": f"python3 {home / '.claude/hooks/credential-guard.py'}",
+                }],
+            },
+        )
+        self.assertTrue(settings_alias.is_symlink())
+        self.assertEqual(
+            [path.name for path in real_settings.parent.glob("*.lock")],
+            [expected_lock.name],
+        )
+        self.assertEqual(list(settings_alias.parent.glob("*.lock")), [])
 
     def test_declared_bundle_installs_and_runs_without_checkout(self):
         declaration = self.bundle_declaration()
