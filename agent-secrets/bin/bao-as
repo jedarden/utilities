@@ -63,14 +63,41 @@ if [ -n "$(find -L "$D/role_id" "$D/secret_id" -perm /0044 -print -quit 2>/dev/n
   exit 78   # EX_CONFIG
 fi
 
+# BAO_AS_BIN is an executable name or path, not a fallback preference. Resolve
+# it before attempting login so a missing or non-executable override cannot
+# accidentally fall through to the default `bao` binary.
+_bin_ok=false
+case "$BIN" in
+  */*)
+    [ -x "$BIN" ] && _bin_ok=true
+    ;;
+  *)
+    _bin_path="$(command -v "$BIN" 2>/dev/null || true)"
+    [ -n "$_bin_path" ] && [ -x "$_bin_path" ] && _bin_ok=true
+    ;;
+esac
+if [ "$_bin_ok" != true ]; then
+  echo "bao-as: selected CLI '$BIN' is missing or not executable; refusing to continue" >&2
+  exit 69   # EX_UNAVAILABLE
+fi
+
 export BAO_ADDR="$ADDR" VAULT_ADDR="$ADDR"
 unset BAO_TOKEN VAULT_TOKEN || true
 
 # @file: neither value ever enters argv, shell history, or `ps`.
-if ! _t="$("$BIN" write -field=token auth/approle/login \
-            role_id=@"$D/role_id" secret_id=@"$D/secret_id" 2>/dev/null)"; then
-  echo "bao-as: AppRole login failed against $INST ($ADDR)" >&2
-  echo "        check: instance reachable, approle enabled, secret_id not expired/revoked" >&2
+if _t="$("$BIN" write -field=token auth/approle/login \
+          role_id=@"$D/role_id" secret_id=@"$D/secret_id" 2>/dev/null)"; then
+  case "$_t" in
+    *[![:space:]]*) ;;
+    *)
+      echo "bao-as: selected CLI '$BIN' returned no token for AppRole login; required CLI contract is unsupported" >&2
+      exit 77   # EX_NOPERM
+      ;;
+  esac
+else
+  _status=$?
+  echo "bao-as: AppRole login failed using selected CLI '$BIN' (exit $_status); refusing to continue" >&2
+  echo "        check: CLI compatibility, instance reachable, approle enabled, secret_id not expired/revoked" >&2
   exit 77   # EX_NOPERM
 fi
 export BAO_TOKEN="$_t" VAULT_TOKEN="$_t"

@@ -2,8 +2,8 @@
 """Tests for bin/bao-as.
 
 The wrapper's whole job is keeping a token out of the transcript, so the
-suite runs it the way a user does -- a stub `bao` placed first on PATH, a
-throwaway BAO_AS_CONFIG_DIR -- and then inspects what actually happened:
+suite runs it the way a user does -- stubs placed first on PATH, a throwaway
+BAO_AS_CONFIG_DIR -- and then inspects what actually happened:
 the stub's argv log, the child command's environment, the exit code and
 stdio that come back. Nothing here contacts a store.
 
@@ -33,7 +33,7 @@ BAO_AS = os.environ.get("BAO_AS_UNDER_TEST") or os.path.join(HERE, "bao-as")
 
 ADDR = "https://bao-fixture.invalid:8200"   # .invalid: never a real store
 
-EX_USAGE, EX_NOPERM, EX_CONFIG = 2, 77, 78
+EX_USAGE, EX_NOPERM, EX_CONFIG, EX_UNAVAILABLE = 2, 77, 78, 69
 
 
 def alnum(n, seed=0):
@@ -71,6 +71,17 @@ fi
 exit 0
 """
 
+STUB_VAULT = """\
+#!/usr/bin/env bash
+printf '=== call ===\\n' >>"$VAULT_STUB_ARGV"
+for a in "$@"; do printf '%s\\n' "$a" >>"$VAULT_STUB_ARGV"; done
+if [ "${1:-}" != write ] || [ "${3:-}" != auth/approle/login ]; then
+  echo "stub vault: unsupported command" >&2
+  exit 2
+fi
+cat "$VAULT_STUB_ISSUED_TOKEN"
+"""
+
 
 def child(body):
     """A command for bao-as to exec, expressed as bash -c <body>."""
@@ -103,8 +114,12 @@ class BaoAsCase(unittest.TestCase):
         self.argv_log = os.path.join(self.tmp, "stub-argv.log")
         self.resolved_log = os.path.join(self.tmp, "stub-resolved.log")
         self.token_file = os.path.join(self.tmp, "issued-token")
+        self.vault_argv_log = os.path.join(self.tmp, "stub-vault-argv.log")
+        self.vault_token_file = os.path.join(self.tmp, "issued-vault-token")
         with open(self.token_file, "w") as fh:
             fh.write(self.issued)
+        with open(self.vault_token_file, "w") as fh:
+            fh.write("vault-fixture-token\n")
         with open(os.path.join(self.pathdir, "bao"), "w") as fh:
             fh.write(STUB_BAO)
         os.chmod(os.path.join(self.pathdir, "bao"), 0o700)
@@ -143,11 +158,20 @@ class BaoAsCase(unittest.TestCase):
         e["BAO_STUB_ARGV"] = self.argv_log
         e["BAO_STUB_RESOLVED"] = self.resolved_log
         e["BAO_STUB_ISSUED_TOKEN"] = self.token_file
+        e["VAULT_STUB_ARGV"] = self.vault_argv_log
+        e["VAULT_STUB_ISSUED_TOKEN"] = self.vault_token_file
         for k in ("BAO_TOKEN", "VAULT_TOKEN", "BAO_ADDR", "VAULT_ADDR",
                   "BAO_AS_BIN", "BAO_STUB_FAIL"):
             e.pop(k, None)
         e.update(over)
         return e
+
+    def write_cli(self, name, body):
+        path = os.path.join(self.pathdir, name)
+        with open(path, "w") as fh:
+            fh.write(body)
+        os.chmod(path, 0o700)
+        return path
 
     def run_bao_as(self, *args, stdin=b"", **env_over):
         # via bash explicitly: a lost exec bit must not fail the suite for
@@ -188,17 +212,33 @@ class Login(BaoAsCase):
         self.assertEqual(resolved, {"role_id=" + self.role_id,
                                     "secret_id=" + self.secret_id})
 
-    def test_bao_as_bin_override_selects_the_cli(self):
-        # the documented BAO_AS_BIN=vault escape hatch
-        other = os.path.join(self.tmp, "other-cli")
-        with open(other, "w") as fh:
-            fh.write("#!/usr/bin/env bash\necho other-token\n")
-        os.chmod(other, 0o700)
+    def test_bao_as_bin_vault_override_selects_vault(self):
+        self.write_cli("vault", STUB_VAULT)
         outfile = os.path.join(self.tmp, "child.env")
-        proc = self.run_bao_as("prod", *envdump_child(outfile), BAO_AS_BIN=other)
+        proc = self.run_bao_as("prod", *envdump_child(outfile), BAO_AS_BIN="vault")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("BAO_TOKEN=other-token", set(read_lines(outfile)))
+        self.assertIn("BAO_TOKEN=vault-fixture-token", set(read_lines(outfile)))
         self.stub_was_never_called()
+        argv = read_lines(self.vault_argv_log)
+        self.assertEqual(argv, [
+            "=== call ===", "write", "-field=token", "auth/approle/login",
+            "role_id=@" + self.cred("prod", "role_id"),
+            "secret_id=@" + self.cred("prod", "secret_id"),
+        ])
+
+    def test_bao_as_bin_unset_defaults_to_bao(self):
+        vault_called = os.path.join(self.tmp, "vault-called")
+        self.write_cli("vault", "#!/usr/bin/env bash\ntouch %s\nexit 99\n" %
+                       shlex.quote(vault_called))
+        proc = self.run_bao_as("prod", *child("exit 0"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(os.path.exists(self.argv_log))
+        self.assertFalse(os.path.exists(vault_called))
+
+    def test_bao_as_bin_empty_defaults_to_bao(self):
+        proc = self.run_bao_as("prod", *child("exit 0"), BAO_AS_BIN="")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(os.path.exists(self.argv_log))
 
 
 class TokenHandling(BaoAsCase):
@@ -321,6 +361,48 @@ class FailClosed(BaoAsCase):
         self.assertIn(b"login failed", proc.stderr)
         self.assertTrue(os.path.exists(self.argv_log))   # the CLI was tried
         self.assertFalse(os.path.exists(marker), "child ran despite failed login")
+
+    def test_missing_selected_cli_fails_closed_without_fallback(self):
+        marker = os.path.join(self.tmp, "child-ran")
+        missing = os.path.join(self.tmp, "missing-vault")
+        proc = self.run_bao_as("prod", *child("touch " + shlex.quote(marker)),
+                               BAO_AS_BIN=missing)
+        self.assertEqual(proc.returncode, EX_UNAVAILABLE)
+        self.assertIn(b"selected CLI", proc.stderr)
+        self.assertIn(b"missing or not executable", proc.stderr)
+        self.stub_was_never_called()
+        self.assertFalse(os.path.exists(marker))
+
+    def test_non_executable_selected_cli_fails_closed_without_fallback(self):
+        path = self.write_cli("vault", "#!/usr/bin/env bash\nexit 0\n")
+        os.chmod(path, 0o600)
+        proc = self.run_bao_as("prod", *child("exit 0"), BAO_AS_BIN=path)
+        self.assertEqual(proc.returncode, EX_UNAVAILABLE)
+        self.assertIn(b"selected CLI", proc.stderr)
+        self.assertIn(b"missing or not executable", proc.stderr)
+        self.stub_was_never_called()
+
+    def test_unsupported_selected_cli_fails_closed_on_empty_login_output(self):
+        self.write_cli("vault", "#!/usr/bin/env bash\nexit 0\n")
+        marker = os.path.join(self.tmp, "child-ran")
+        proc = self.run_bao_as("prod", *child("touch " + shlex.quote(marker)),
+                               BAO_AS_BIN="vault")
+        self.assertEqual(proc.returncode, EX_NOPERM)
+        self.assertIn(b"returned no token", proc.stderr)
+        self.assertIn(b"unsupported", proc.stderr)
+        self.stub_was_never_called()
+        self.assertFalse(os.path.exists(marker))
+
+    def test_selected_cli_rejecting_login_fails_closed_without_fallback(self):
+        self.write_cli("vault", "#!/usr/bin/env bash\nexit 2\n")
+        marker = os.path.join(self.tmp, "child-ran")
+        proc = self.run_bao_as("prod", *child("touch " + shlex.quote(marker)),
+                               BAO_AS_BIN="vault")
+        self.assertEqual(proc.returncode, EX_NOPERM)
+        self.assertIn(b"AppRole login failed", proc.stderr)
+        self.assertIn(b"selected CLI 'vault'", proc.stderr)
+        self.stub_was_never_called()
+        self.assertFalse(os.path.exists(marker))
 
 
 class InstanceTable(BaoAsCase):

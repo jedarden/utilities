@@ -237,6 +237,66 @@ There is no separate endpoint setting: the address in the selected table row
 is used for that invocation. `BAO_AS_CONFIG_DIR` is a directory override, not
 an override for the `instances.conf` filename.
 
+### CLI compatibility contract
+
+`BAO_AS_BIN` selects only the executable used for the AppRole login. When it is
+unset or empty, `bao-as` uses `bao`; a non-empty value is used as an executable
+name resolved through `PATH` or as a path. There is no fallback to `bao` when
+an override is missing, non-executable, or incompatible. The selected
+executable must accept this exact login invocation and print only a non-empty
+token on stdout:
+
+```
+<cli> write -field=token auth/approle/login \
+  role_id=@<role_id-file> secret_id=@<secret_id-file>
+```
+
+The CLI must support `write`, `-field=token`, the AppRole login endpoint, and
+the `key=@file` argument form. The wrapper supplies both `BAO_ADDR` and
+`VAULT_ADDR` for login, then exports the returned value as both
+`BAO_TOKEN` and `VAULT_TOKEN` to the child. A missing or non-executable
+selected CLI exits with `EX_UNAVAILABLE` (69); a failed login or an empty
+token exits with `EX_NOPERM` (77). In either case the requested child is not
+started and `bao` is never tried as a fallback.
+
+The command after the instance is passed through unchanged. `BAO_AS_BIN` does
+not rewrite `bao` to `vault` (or vice versa), and `bao-as` does not inspect or
+translate that command's flags. A caller using the selected CLI must therefore
+use its own KV-v2 command surface:
+
+```bash
+# OpenBao path-style forms used by this utility's examples.
+bao-as "$instance_name" bao kv metadata get -format=json secret/app/db
+openssl rand -base64 32 | bao-as "$instance_name" bao kv put \
+  -cas=3 secret/app/db password=-
+bao-as "$instance_name" bao kv get -field=token secret/app/api
+
+# Vault: use explicit mount and secret path forms to avoid KV-v2 path
+# detection differences between CLI versions.
+bao-as "$instance_name" vault kv metadata get -mount=secret -format=json app/db
+openssl rand -base64 32 | bao-as "$instance_name" vault kv put \
+  -mount=secret -cas=3 app/db password=-
+bao-as "$instance_name" vault kv get -mount=secret -field=token app/api
+```
+
+For this contract, `kv get` must support `-field` and `-format=json`, `kv put`
+must support `-cas=N` and stdin values such as `password=-`, and `kv metadata
+get` must support `-format=json` with the current version at
+`.data.current_version`. `-cas=0` is create-only; a positive value must match
+the current version. Pass an explicit CAS value rather than relying on a
+CLI/backend default. `kv metadata get` reports version metadata; it does not
+replace `kv put`'s CAS check.
+
+HashiCorp documents the explicit `-mount` KV syntax as available in Vault 1.11
+and later; older Vault versions require the deprecated path-like form. That is
+a syntax floor for the Vault example, not a tested release floor: this
+repository's tests use stubs and do not run a Vault binary or contact a Vault
+server. Validate the installed Vault version and the target mount separately
+before using it. See the [Vault KV command documentation](https://developer.hashicorp.com/vault/docs/commands/kv),
+[`kv put` CAS options](https://developer.hashicorp.com/vault/docs/commands/kv/put),
+and [AppRole CLI login](https://developer.hashicorp.com/vault/docs/auth/approle)
+for the upstream command details.
+
 Start from the placeholder-only file at
 [`examples/bao-as-instances.conf`](examples/bao-as-instances.conf), replace
 both placeholders, then create the matching credential directory and files:

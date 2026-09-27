@@ -56,9 +56,10 @@ README is the contract for upgrading and removing an installed copy.
 Run the checks from the repository root with Python 3.9 or newer, a POSIX
 `sh`, Bash for `scripts/check-versions.sh`, and ShellCheck 0.9.0 or newer.
 The Python checks use only the standard library; no package install is needed.
-`agent-secrets/bin/bao-as` defaults to the OpenBao `bao` CLI (OpenBao 2.x, or
-a compatible Vault CLI selected with `BAO_AS_BIN=vault`) when it logs in to a
-real store. Its test suite supplies a stub CLI and does not contact a store.
+`agent-secrets/bin/bao-as` defaults to the OpenBao `bao` CLI (OpenBao 2.x). A
+Vault override is supported only under the exact login/KV compatibility
+contract documented in [`agent-secrets/README.md`](agent-secrets/README.md#cli-compatibility-contract);
+the test suite supplies stubs and does not contact a store.
 
 ### Local verification
 

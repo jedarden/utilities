@@ -75,9 +75,11 @@ tool; nothing shared between folders except the license and this plan.
   `exec` the command with the token only in its environment. Refuses to
   start when a credential file is missing or readable by group/other —
   mode 0600 is enforced, not advisory.
-- `bin/test_bao_as.py` — unittest suite for the wrapper. Runs it against a
-  stub `bao` placed first on `PATH` and a throwaway `BAO_AS_CONFIG_DIR`,
-  then inspects what actually happened: the login argv carries
+- `bin/test_bao_as.py` — unittest suite for the wrapper. Runs it against
+  stubs placed first on `PATH` and a throwaway `BAO_AS_CONFIG_DIR`, then
+  inspects what actually happened: the default `bao` selection, the
+  `BAO_AS_BIN=vault` override, and missing/non-executable/unsupported
+  selections fail closed; the login argv carries
   `role_id=@`/`secret_id=@` and never the values, the issued token exists
   only in the child's environment (a stale inherited one does not survive)
   and is never printed, `exec` preserves the child's exit code and stdio,
