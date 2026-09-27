@@ -21,7 +21,7 @@
 # remove a file this folder did not install, since on a machine running the
 # pre-port hook that file is live enforcement for the whole fleet.
 set -eu
-HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
+HERE=$(CDPATH=; cd "$(dirname "$0")" && pwd)
 HOOK_DST="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/org-rule-guard.py"
 BUNDLE_VERSION="0.1.0"
 BUNDLE_SOURCE="$HERE/../agent-secrets/hooks/credential-guard.py"

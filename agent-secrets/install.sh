@@ -23,7 +23,7 @@
 # to instances.conf belong to the operator, and an uninstaller that removed
 # them would destroy live AppRole secrets.
 set -eu
-HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
+HERE=$(CDPATH=; cd "$(dirname "$0")" && pwd)
 HOOK_DST="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/credential-guard.py"
 BIN_DST="${BIN_DIR:-$HOME/.local/bin}/bao-as"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"

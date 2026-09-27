@@ -34,8 +34,62 @@ git clone https://git.ardenone.com/jedarden/utilities.git ~/utilities
   that check and verifies each `<utility>/VERSION` has a matching
   `<utility>/vX.Y.Z` tag (CI runs the combined gate on every push)
 - `docs/notes/` — features, constraints, design decisions
+- `docs/examples/` — shipped wiring examples, including the combined
+  [`settings-both.json`](docs/examples/settings-both.json) configuration for
+  running both PreToolUse guards
 - `docs/research/` — external reference material and prior art
 - `docs/plan/plan.md` — complete plan for the repo
+
+## Development
+
+### Prerequisites
+
+Run the checks from the repository root with Python 3.9 or newer, a POSIX
+`sh`, Bash for `scripts/check-versions.sh`, and ShellCheck 0.9.0 or newer.
+The Python checks use only the standard library; no package install is needed.
+`agent-secrets/bin/bao-as` defaults to the OpenBao `bao` CLI (OpenBao 2.x, or
+a compatible Vault CLI selected with `BAO_AS_BIN=vault`) when it logs in to a
+real store. Its test suite supplies a stub CLI and does not contact a store.
+
+### Local verification
+
+These commands are the individual unittest suites described by the plan:
+
+```bash
+python3 -m unittest discover -s agent-secrets/hooks -p 'test_credential_guard.py' -v
+python3 -m unittest discover -s agent-secrets/bin -p 'test_bao_as.py' -v
+python3 -m unittest discover -s agent-secrets/policies -p 'test_policies.py' -v
+python3 -m unittest discover -s org-rule-guard/hooks -p 'test_org_rule_guard.py' -v
+python3 -m unittest discover -s scripts -p 'test_check_structure.py' -v
+python3 -m unittest discover -s scripts -p 'test_check_versions.py' -v
+python3 -m unittest discover -s scripts -p 'test_hook_composition.py' -v
+```
+
+Check the shell entry points with:
+
+```bash
+shellcheck agent-secrets/install.sh agent-secrets/bin/bao-as \
+  org-rule-guard/install.sh scripts/check-versions.sh
+```
+
+### Adding a utility
+
+1. Create `<utility>/` with an owned `README.md`, semver `VERSION`, and
+   executable POSIX `install.sh`; keep runtime code self-contained.
+2. Add the new folder to the README `Folder` table and document its install
+   and test commands.
+3. Run the local verification commands above and
+   `python3 scripts/check-structure.py`.
+4. Commit the utility, its README row, and its initial/version-bumped
+   `VERSION` together. Create `<utility>/vX.Y.Z` at that commit, then push the
+   commit and tag together:
+
+   ```bash
+   git push origin main <utility>/vX.Y.Z
+   ```
+
+   The VERSION bump and matching tag are one release unit; pushing only the
+   commit leaves the version gate red.
 
 ## Releasing
 
