@@ -30,6 +30,9 @@ git clone --branch org-rule-guard/v0.1.0 --depth 1 \
 
 Replace `v0.1.0` with the released version you want. The utility-specific
 README is the contract for upgrading and removing an installed copy.
+Each installer also records the selected utility version and any install-time
+bundle pins in its installed hook layout; the utility README documents the
+read-only status query for that record.
 
 ### Composing both guards with an existing settings file
 

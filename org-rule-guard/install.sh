@@ -6,6 +6,7 @@
 #   ./install.sh --wire         install (overwriting) and merge/upgrade the
 #                               PreToolUse entry into ~/.claude/settings.json
 #   ./install.sh --wire --force replace customized wiring fields too
+#   ./install.sh --status print the installed version and bundle provenance
 #   ./install.sh --uninstall    remove the installed hook and settings lock
 #                               (settings left alone)
 #
@@ -25,9 +26,9 @@
 set -eu
 HERE=$(CDPATH=; cd "$(dirname "$0")" && pwd)
 HOOK_DST="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/org-rule-guard.py"
-BUNDLE_VERSION="0.1.0"
 BUNDLE_SOURCE="$HERE/../agent-secrets/hooks/credential-guard.py"
 BUNDLE_DST="${HOOK_DST%.py}/credential-guard.py"
+PROVENANCE_DST="${HOOK_DST%.py}/provenance.json"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 force=0
 case " $* " in *" --force"*) force=1 ;; esac
@@ -35,7 +36,14 @@ wire=0
 case " $* " in *" --wire"*) wire=1 ;; esac
 
 case "${1:-}" in
-  -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+  --status)
+    if [ ! -f "$PROVENANCE_DST" ]; then
+      echo "install.sh: no installed provenance at $PROVENANCE_DST" >&2
+      exit 1
+    fi
+    cat "$PROVENANCE_DST"
+    exit 0 ;;
   --uninstall)
     if [ -e "$HOOK_DST" ] && [ "$force" -ne 1 ] \
        && ! cmp -s "$HERE/hooks/org-rule-guard.py" "$HOOK_DST"; then
@@ -121,11 +129,37 @@ if lock_fd is not None:
         finally:
             os.close(lock_fd)
 PY
-    rm -f "$HOOK_DST" "$BUNDLE_DST"
+    rm -f "$HOOK_DST" "$BUNDLE_DST" "$PROVENANCE_DST"
+    rmdir "${HOOK_DST%.py}" 2>/dev/null || :
     echo "removed $HOOK_DST and $BUNDLE_DST (settings.json and ${XDG_STATE_HOME:-$HOME/.local/state}/{org-rule-guard,credential-guard} logs untouched; settings lock removed if present)"
     exit 0 ;;
 esac
 
+BUNDLE_VERSION="$(python3 - "$HERE/bundled-dependencies.json" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+try:
+    with open(manifest_path, encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    bundles = manifest["bundles"]
+    bundle = bundles[0]
+    if (
+        set(manifest) != {"bundles"}
+        or len(bundles) != 1
+        or set(bundle) != {"utility", "version", "source", "destination"}
+        or bundle["utility"] != "agent-secrets"
+        or bundle["source"] != "hooks/credential-guard.py"
+        or bundle["destination"] != "credential-guard.py"
+    ):
+        raise ValueError("unsupported bundle declaration")
+    print(bundle["version"])
+except (KeyError, IndexError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    print(f"install.sh: invalid bundle manifest {manifest_path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+)"
 if [ ! -f "$BUNDLE_SOURCE" ]; then
   echo "install.sh: pinned bundle source is missing: $BUNDLE_SOURCE" >&2
   exit 1
@@ -153,8 +187,66 @@ if [ "$blocked" -eq 1 ]; then
   exit 0
 fi
 
+if [ -f "$PROVENANCE_DST" ]; then
+  python3 - "$PROVENANCE_DST" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        provenance = json.load(handle)
+    print(
+        f"previously installed {provenance['utility']} v{provenance['version']}"
+    )
+    for bundle in provenance.get("bundles", []):
+        print(
+            f"previously bundled {bundle['utility']} v{bundle['version']}"
+        )
+except (OSError, KeyError, TypeError, ValueError):
+    print("previously installed version unknown (invalid provenance)")
+PY
+fi
 install -m 755 "$HERE/hooks/org-rule-guard.py" "$HOOK_DST"
 install -m 755 "$HERE/../agent-secrets/hooks/credential-guard.py" "$BUNDLE_DST"
+python3 - "$PROVENANCE_DST" "$HERE/VERSION" "$HERE/bundled-dependencies.json" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+destination, version_path, manifest_path = sys.argv[1:]
+with open(version_path, encoding="utf-8") as handle:
+    version = handle.readline().strip()
+with open(manifest_path, encoding="utf-8") as handle:
+    manifest = json.load(handle)
+if not version:
+    raise SystemExit(f"install.sh: empty utility VERSION: {version_path}")
+provenance = {
+    "utility": "org-rule-guard",
+    "version": version,
+    "bundles": manifest["bundles"],
+}
+directory = os.path.dirname(destination)
+fd, temporary = tempfile.mkstemp(
+    prefix=".provenance.", suffix=".tmp", dir=directory
+)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        fd = None
+        json.dump(provenance, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, destination)
+finally:
+    if fd is not None:
+        os.close(fd)
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
 echo "installed  $HOOK_DST"
 echo "bundled    $BUNDLE_DST (agent-secrets v$BUNDLE_VERSION)"
 echo "log        ${XDG_STATE_HOME:-$HOME/.local/state}/org-rule-guard/denials.jsonl  (256 KiB active cap, one rotated backup)"

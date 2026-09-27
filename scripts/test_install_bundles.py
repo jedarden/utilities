@@ -105,6 +105,19 @@ class SelectiveInstallTests(unittest.TestCase):
             timeout=30,
         )
 
+    def read_provenance(self, home, utility):
+        if utility == "agent-secrets":
+            path = home / ".claude" / "hooks" / "agent-secrets" / "provenance.json"
+        else:
+            path = (
+                home
+                / ".claude"
+                / "hooks"
+                / "org-rule-guard"
+                / "provenance.json"
+            )
+        return path, json.loads(path.read_text(encoding="utf-8"))
+
     def hold_settings_lock(self, lock_path):
         code = """import fcntl
 import os
@@ -203,6 +216,20 @@ sys.stdin.read()
         self.assertTrue(hook_dst.is_file(), result.stdout)
         self.assertTrue(bao_as_dst.is_file(), result.stdout)
         self.assertTrue(os.access(bao_as_dst, os.X_OK))
+        _, provenance = self.read_provenance(home, "agent-secrets")
+        version = (
+            (release / "agent-secrets" / "VERSION")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+            .strip()
+        )
+        self.assertEqual(
+            provenance,
+            {"utility": "agent-secrets", "version": version, "bundles": []},
+        )
+        status = self.run_install(release, "agent-secrets", home, runtime, "--status")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(json.loads(status.stdout), provenance)
         self.assertFalse((release / "org-rule-guard").exists())
         self.assertEqual(
             hook_dst.read_bytes(),
@@ -301,6 +328,23 @@ sys.stdin.read()
         bundle_dst = bundle_root / PurePosixPath(declaration["destination"])
         self.assertTrue(hook_dst.is_file(), result.stdout)
         self.assertTrue(bundle_dst.is_file(), result.stdout)
+        _, provenance = self.read_provenance(home, "org-rule-guard")
+        self.assertEqual(
+            provenance,
+            {
+                "utility": "org-rule-guard",
+                "version": (
+                    (release / "org-rule-guard" / "VERSION")
+                    .read_text(encoding="utf-8")
+                    .splitlines()[0]
+                    .strip()
+                ),
+                "bundles": [declaration],
+            },
+        )
+        status = self.run_install(release, "org-rule-guard", home, runtime, "--status")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(json.loads(status.stdout), provenance)
         self.assertEqual(bundle_dst.read_bytes(), source_bytes)
         self.assertEqual(stat.S_IMODE(bundle_dst.stat().st_mode), 0o755)
         self.assertEqual(bundle_dst.parent, bundle_root)
@@ -738,6 +782,57 @@ sys.stdin.read()
             % (mismatch, checkout / declaration["utility"], sibling_version),
             result.stderr,
         )
+
+    def test_reinstall_reports_previous_provenance_before_replacing_agent_secrets(self):
+        first = self.stage_release("agent-secrets")
+        second = self.stage_release("agent-secrets")
+        new_version = "0.2.0"
+        (second / "agent-secrets" / "VERSION").write_text(
+            new_version + "\n", encoding="utf-8"
+        )
+        home = self.temp_dir("agent-secrets-reinstall-home-")
+        runtime = self.temp_dir("agent-secrets-reinstall-runtime-")
+
+        initial = self.run_install(first, "agent-secrets", home, runtime)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        replacement = self.run_install(
+            second, "agent-secrets", home, runtime, "--force"
+        )
+
+        self.assertEqual(replacement.returncode, 0, replacement.stderr)
+        self.assertIn("previously installed agent-secrets v0.1.0", replacement.stdout)
+        _, provenance = self.read_provenance(home, "agent-secrets")
+        self.assertEqual(provenance["version"], new_version)
+
+    def test_reinstall_reports_previous_bundle_provenance_before_replacing_org_guard(self):
+        first = self.stage_checkout()
+        second = self.stage_checkout()
+        new_version = "0.2.0"
+        (second / "agent-secrets" / "VERSION").write_text(
+            new_version + "\n", encoding="utf-8"
+        )
+        (second / "org-rule-guard" / "VERSION").write_text(
+            new_version + "\n", encoding="utf-8"
+        )
+        manifest_path = second / "org-rule-guard" / "bundled-dependencies.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["bundles"][0]["version"] = new_version
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        home = self.temp_dir("org-rule-guard-reinstall-home-")
+        runtime = self.temp_dir("org-rule-guard-reinstall-runtime-")
+
+        initial = self.run_install(first, "org-rule-guard", home, runtime)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        replacement = self.run_install(
+            second, "org-rule-guard", home, runtime, "--force"
+        )
+
+        self.assertEqual(replacement.returncode, 0, replacement.stderr)
+        self.assertIn("previously installed org-rule-guard v0.1.0", replacement.stdout)
+        self.assertIn("previously bundled agent-secrets v0.1.0", replacement.stdout)
+        _, provenance = self.read_provenance(home, "org-rule-guard")
+        self.assertEqual(provenance["version"], new_version)
+        self.assertEqual(provenance["bundles"][0]["version"], new_version)
 
 
 if __name__ == "__main__":

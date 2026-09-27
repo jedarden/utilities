@@ -7,6 +7,7 @@
 #   ./install.sh --wire         install (overwriting) and merge/upgrade the
 #                               PreToolUse entry into ~/.claude/settings.json
 #   ./install.sh --wire --force replace customized wiring fields too
+#   ./install.sh --status print the installed version and bundle provenance
 #   ./install.sh --uninstall    remove what this script installed and the
 #                               settings lock (settings and ~/.config/bao-as
 #                               left alone)
@@ -28,6 +29,8 @@ set -eu
 HERE=$(CDPATH=; cd "$(dirname "$0")" && pwd)
 HOOK_DST="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/credential-guard.py"
 BIN_DST="${BIN_DIR:-$HOME/.local/bin}/bao-as"
+PROVENANCE_DIR="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/agent-secrets"
+PROVENANCE_DST="$PROVENANCE_DIR/provenance.json"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CONF_DIR="${BAO_AS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bao-as}"
 force=0
@@ -42,8 +45,80 @@ refuse() {
   exit 1
 }
 
+report_previous_install() {
+  if [ ! -f "$PROVENANCE_DST" ]; then
+    return 0
+  fi
+  python3 - "$PROVENANCE_DST" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        provenance = json.load(handle)
+    utility = provenance["utility"]
+    version = provenance["version"]
+except (OSError, KeyError, TypeError, ValueError):
+    print("previously installed version unknown (invalid provenance)")
+else:
+    print(f"previously installed {utility} v{version}")
+    for bundle in provenance.get("bundles", []):
+        print(
+            f"previously bundled {bundle['utility']} v{bundle['version']}"
+        )
+PY
+}
+
+write_provenance() {
+  python3 - "$PROVENANCE_DST" "$HERE/VERSION" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+destination, version_path = sys.argv[1:]
+with open(version_path, encoding="utf-8") as handle:
+    version = handle.readline().strip()
+if not version:
+    raise SystemExit(f"install.sh: empty utility VERSION: {version_path}")
+
+provenance = {
+    "utility": "agent-secrets",
+    "version": version,
+    "bundles": [],
+}
+directory = os.path.dirname(destination)
+fd, temporary = tempfile.mkstemp(
+    prefix=".provenance.", suffix=".tmp", dir=directory
+)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        fd = None
+        json.dump(provenance, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, destination)
+finally:
+    if fd is not None:
+        os.close(fd)
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
+}
+
 case "${1:-}" in
   -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+  --status)
+    if [ ! -f "$PROVENANCE_DST" ]; then
+      echo "install.sh: no installed provenance at $PROVENANCE_DST" >&2
+      exit 1
+    fi
+    cat "$PROVENANCE_DST"
+    exit 0 ;;
   --uninstall)
     if [ -e "$HOOK_DST" ] && [ "$force" -ne 1 ] \
        && ! cmp -s "$HERE/hooks/credential-guard.py" "$HOOK_DST"; then
@@ -124,12 +199,13 @@ if lock_fd is not None:
         finally:
             os.close(lock_fd)
 PY
-    rm -f "$HOOK_DST" "$BIN_DST"
+    rm -f "$HOOK_DST" "$BIN_DST" "$PROVENANCE_DST"
+    rmdir "$PROVENANCE_DIR" 2>/dev/null || :
     echo "removed $HOOK_DST and $BIN_DST (settings.json and $CONF_DIR untouched; settings lock removed if present)"
     exit 0 ;;
 esac
 
-install -d -m 700 "$(dirname "$HOOK_DST")" "$(dirname "$BIN_DST")" "$CONF_DIR"
+install -d -m 700 "$(dirname "$HOOK_DST")" "$(dirname "$BIN_DST")" "$CONF_DIR" "$PROVENANCE_DIR"
 
 blocked=0
 for dst in "$HOOK_DST" "$BIN_DST"; do
@@ -146,8 +222,10 @@ if [ "$blocked" -eq 1 ]; then
   exit 0
 fi
 
+report_previous_install
 install -m 755 "$HERE/hooks/credential-guard.py" "$HOOK_DST"
 install -m 755 "$HERE/bin/bao-as" "$BIN_DST"
+write_provenance
 # instances.conf is the operator's instance table, not code: seed it once at
 # 0600, never rewrite it -- not even under --force.
 [ -e "$CONF_DIR/instances.conf" ] || install -m 600 "$HERE/examples/bao-as-instances.conf" "$CONF_DIR/instances.conf"

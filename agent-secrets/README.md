@@ -75,6 +75,20 @@ environment needs a different finite deadline; waiting is never indefinite.
 then removes it if present. If the lock cannot be acquired or removed,
 uninstall aborts before removing installed files.
 
+Every successful install writes JSON provenance to
+`~/.claude/hooks/agent-secrets/provenance.json` (or the corresponding
+`CLAUDE_HOOKS_DIR`). It contains this utility's `VERSION` and an empty
+`bundles` list. Query the installed copy without changing anything with:
+
+```bash
+./agent-secrets/install.sh --status
+```
+
+The command prints that JSON and exits nonzero when no provenance record is
+present. A forced reinstall reports the previously installed utility version
+before replacing the hook, wrapper, and provenance record. `--uninstall`
+removes the provenance record with those installed files.
+
 `CLAUDE_SETTINGS` defaults to `~/.claude/settings.json` and is used literally
 for `--wire`. An absolute value is used as an absolute path. A relative value
 is resolved against the installer's current working directory, not against the
