@@ -39,6 +39,9 @@ class VersionCheckerTests(unittest.TestCase):
         scripts = self.fixture / "scripts"
         scripts.mkdir()
         shutil.copy2(STRUCTURE_CHECKER, scripts / "check-structure.py")
+        (self.fixture / "LICENSE").write_text(
+            "MIT License\n", encoding="utf-8"
+        )
 
     def git(self, *args, check=True):
         return subprocess.run(
