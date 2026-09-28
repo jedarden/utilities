@@ -1,0 +1,80 @@
+{
+  "model": "claude-sonnet-4-5",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Read(/workspace/**)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "printf status-line"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf session-start"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf post-tool-use"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf stop"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf unrelated-pretooluse"
+          }
+        ],
+        "operator_note": "operator-owned entry stays byte-for-byte intact"
+      },
+      {
+        "matcher": "__OWN_MATCHER__",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__OWN_COMMAND__"
+          }
+        ]
+      }
+    ]
+  },
+  "customTopLevel": {
+    "nested": [
+      "preserve this value",
+      {
+        "number": 42,
+        "enabled": true
+      }
+    ]
+  }
+}

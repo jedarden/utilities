@@ -24,6 +24,9 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 ORG_RULE_GUARD = ROOT / "org-rule-guard"
 MANIFEST = ORG_RULE_GUARD / "bundled-dependencies.json"
+SETTINGS_PRESERVATION_FIXTURE = (
+    ROOT / "scripts" / "fixtures" / "settings-preservation.json"
+)
 
 
 def alnum(length, seed=0):
@@ -177,6 +180,42 @@ sys.stdin.read()
                 )
             )
         return processes
+
+    def preservation_fixture(self, utility, case, command):
+        with SETTINGS_PRESERVATION_FIXTURE.open(encoding="utf-8") as handle:
+            settings = json.load(handle)
+
+        own_entry = settings["hooks"]["PreToolUse"][-1]
+        own_entry["hooks"][0]["command"] = command
+        desired_matcher = "Write|Edit|MultiEdit|Bash"
+        if case == "append":
+            settings["hooks"]["PreToolUse"].pop()
+        elif case == "current":
+            own_entry["matcher"] = desired_matcher
+            if utility == "org-rule-guard":
+                own_entry["hooks"][0]["timeout"] = 10
+        elif case == "legacy":
+            self.assertEqual(utility, "org-rule-guard")
+            own_entry["matcher"] = "Write|Edit|Bash"
+            own_entry["hooks"][0]["timeout"] = 10
+        else:
+            self.fail("unknown settings preservation case: %s" % case)
+        return settings
+
+    def without_owned_entry(self, settings, command):
+        preserved = json.loads(json.dumps(settings))
+        entries = preserved["hooks"]["PreToolUse"]
+        matching = [
+            entry for entry in entries
+            if any(
+                isinstance(handler, dict)
+                and handler.get("command") == command
+                for handler in entry.get("hooks", [])
+            )
+        ]
+        self.assertEqual(len(matching), 1)
+        entries.remove(matching[0])
+        return json.dumps(preserved, indent=2).encode("utf-8") + b"\n"
 
     def run_installed_hook(self, hook, home, runtime, payload, state):
         env = self.clean_environment(home)
@@ -506,6 +545,76 @@ sys.stdin.read()
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("already", result.stdout)
         self.assertEqual(settings.read_bytes(), after_first_wire)
+
+    def test_each_wire_preserves_fixture_content_on_every_merge_path(self):
+        """Unrelated fixture bytes survive each installer's individual wire paths."""
+        cases = (
+            ("agent-secrets", "append"),
+            ("agent-secrets", "current"),
+            ("org-rule-guard", "append"),
+            ("org-rule-guard", "current"),
+            ("org-rule-guard", "legacy"),
+        )
+        for utility, case in cases:
+            with self.subTest(utility=utility, case=case):
+                checkout = self.stage_checkout()
+                home = self.temp_dir(
+                    "preservation-wire-home-%s-%s-" % (utility, case)
+                )
+                runtime = self.temp_dir(
+                    "preservation-wire-runtime-%s-%s-" % (utility, case)
+                )
+                settings_path = home / ".claude" / "settings.json"
+                settings_path.parent.mkdir(parents=True)
+                hook_name = (
+                    "credential-guard.py"
+                    if utility == "agent-secrets"
+                    else "org-rule-guard.py"
+                )
+                command = "python3 %s" % (home / ".claude/hooks" / hook_name)
+                fixture = self.preservation_fixture(utility, case, command)
+                settings_path.write_bytes(
+                    json.dumps(fixture, indent=2).encode("utf-8") + b"\n"
+                )
+                before = settings_path.read_bytes()
+
+                result = self.run_install(
+                    checkout,
+                    utility,
+                    home,
+                    runtime,
+                    mode="--wire",
+                    settings=settings_path,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                after = settings_path.read_bytes()
+                merged = json.loads(after)
+                pretooluse = merged["hooks"]["PreToolUse"]
+                own_entries = [
+                    entry for entry in pretooluse
+                    if any(
+                        handler.get("command") == command
+                        for handler in entry.get("hooks", [])
+                        if isinstance(handler, dict)
+                    )
+                ]
+                self.assertEqual(len(own_entries), 1)
+                if case == "append":
+                    self.assertIn("wired", result.stdout)
+                    self.assertEqual(
+                        self.without_owned_entry(merged, command),
+                        before,
+                    )
+                elif case == "current":
+                    self.assertIn("already", result.stdout)
+                    self.assertEqual(after, before)
+                else:
+                    self.assertIn("refreshed", result.stdout)
+                    self.assertEqual(
+                        self.without_owned_entry(merged, command),
+                        self.without_owned_entry(json.loads(before), command),
+                    )
 
     def test_wire_refreshes_org_rule_guard_legacy_entry_in_place(self):
         """The one documented org-rule-guard legacy shape is upgraded in place."""
