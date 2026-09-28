@@ -338,11 +338,19 @@ upgrade):
 
 The uninstaller removes the org hook and its bundled credential guard only when
 they still match this checkout, refusing a hand-edited or unknown copy unless
-`--force` is supplied. It intentionally leaves `settings.json` and both denial
-logs untouched. After uninstalling, remove this utility's `PreToolUse` command
-from `settings.json` yourself; keep the entry if another installed copy still
-uses that same destination. The source checkout can then be deleted if it is
-no longer needed.
+`--force` is supplied. It removes this install's `provenance.json` and then
+removes the `org-rule-guard/` provenance directory if it is empty; the shared
+hooks parent is never removed. It intentionally leaves `settings.json` and
+both complete denial state directories
+(`${XDG_STATE_HOME:-~/.local/state}/{org-rule-guard,credential-guard}/`)
+untouched, including each active log, rotated backup, and advisory lock. The
+bounded logs are retained because their audit history remains useful after
+uninstall; uninstall must not erase evidence from either guard. Remove those
+state directories manually only after reviewing or exporting the history.
+After uninstalling, remove this utility's `PreToolUse` command from
+`settings.json` yourself; keep the entry if another installed copy still uses
+that same destination. The source checkout can then be deleted if it is no
+longer needed.
 
 Promoting the copy that logs is what turns the learning signal on — the live
 hook as of 2026-09 still predates the log and writes nothing.

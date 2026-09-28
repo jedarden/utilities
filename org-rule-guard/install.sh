@@ -7,7 +7,8 @@
 #                               PreToolUse entry into ~/.claude/settings.json
 #   ./install.sh --wire --force replace customized wiring fields too
 #   ./install.sh --status print provenance and check installed-file drift
-#   ./install.sh --uninstall    remove the installed hook and settings lock
+#   ./install.sh --uninstall    remove the installed hook and settings lock;
+#                               retain denial state for audit history
 #                               (settings left alone)
 #
 # The credential guard is a pinned install-time bundle.  The source lives in
@@ -29,6 +30,8 @@ HOOK_DST="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/org-rule-guard.py"
 BUNDLE_SOURCE="$HERE/../agent-secrets/hooks/credential-guard.py"
 BUNDLE_DST="${HOOK_DST%.py}/credential-guard.py"
 PROVENANCE_DST="${HOOK_DST%.py}/provenance.json"
+ORG_STATE_DIR="${ORG_RULE_GUARD_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/org-rule-guard}"
+CREDENTIAL_STATE_DIR="${CREDENTIAL_GUARD_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/credential-guard}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 force=0
 case " $* " in *" --force"*) force=1 ;; esac
@@ -254,8 +257,12 @@ if lock_fd is not None:
             os.close(lock_fd)
 PY
     rm -f "$HOOK_DST" "$BUNDLE_DST" "$PROVENANCE_DST"
+    # The provenance record describes this installed copy and is removed with
+    # it. Both denial states are independent audit data: retain each active
+    # log, rotated backup, lock, and parent directory so uninstall cannot
+    # erase the bounded records of what either guard denied.
     rmdir "${HOOK_DST%.py}" 2>/dev/null || :
-    echo "removed $HOOK_DST and $BUNDLE_DST (settings.json and ${XDG_STATE_HOME:-$HOME/.local/state}/{org-rule-guard,credential-guard} logs untouched; settings lock removed if present)"
+    echo "removed $HOOK_DST and $BUNDLE_DST (provenance removed; settings.json and $ORG_STATE_DIR, $CREDENTIAL_STATE_DIR untouched; settings lock removed if present)"
     exit 0 ;;
 esac
 

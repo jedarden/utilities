@@ -9,8 +9,8 @@
 #   ./install.sh --wire --force replace customized wiring fields too
 #   ./install.sh --status print provenance and check installed-file drift
 #   ./install.sh --uninstall    remove what this script installed and the
-#                               settings lock (settings and ~/.config/bao-as
-#                               left alone)
+#                               settings lock (settings, ~/.config/bao-as,
+#                               and credential denial state left alone)
 #
 # Idempotent. Without --wire this script never touches
 # ~/.claude/settings.json, and it never overwrites a hook or bao-as copy it
@@ -31,6 +31,7 @@ HOOK_DST="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/credential-guard.py"
 BIN_DST="${BIN_DIR:-$HOME/.local/bin}/bao-as"
 PROVENANCE_DIR="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/agent-secrets"
 PROVENANCE_DST="$PROVENANCE_DIR/provenance.json"
+STATE_DIR="${CREDENTIAL_GUARD_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/credential-guard}"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CONF_DIR="${BAO_AS_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bao-as}"
 force=0
@@ -293,8 +294,12 @@ if lock_fd is not None:
             os.close(lock_fd)
 PY
     rm -f "$HOOK_DST" "$BIN_DST" "$PROVENANCE_DST"
+    # The provenance record describes this installed copy and is removed with
+    # it. The denial state is independent audit data: retain the active log,
+    # rotated backup, lock, and state directory so uninstall cannot erase the
+    # bounded record of what this guard denied.
     rmdir "$PROVENANCE_DIR" 2>/dev/null || :
-    echo "removed $HOOK_DST and $BIN_DST (settings.json and $CONF_DIR untouched; settings lock removed if present)"
+    echo "removed $HOOK_DST and $BIN_DST (provenance removed; settings.json, $CONF_DIR, and $STATE_DIR untouched; settings lock removed if present)"
     exit 0 ;;
 esac
 

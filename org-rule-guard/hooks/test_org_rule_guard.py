@@ -806,21 +806,50 @@ time.sleep(60)
             os.path.join(home, ".claude", "settings.json")), out)
 
     def test_uninstall_leaves_the_denial_log_in_place(self):
-        """The log is the fleet's record of what was denied; an uninstaller
-        that removed it would let a re-install erase the evidence."""
+        """Uninstall removes install metadata but retains both audit states.
+
+        The bounded logs are the guards' records of what was denied; an
+        uninstaller that removed them would erase evidence and let a reinstall
+        hide the earlier history.
+        """
         state = tempfile.mkdtemp(prefix="org-rule-guard-state-")
         _CLEANUP.append(state)
-        log_dir = os.path.join(state, "org-rule-guard")
-        os.makedirs(log_dir)
-        log = os.path.join(log_dir, "denials.jsonl")
-        with open(log, "w") as fh:
-            fh.write('{"rule_id": "keep-me"}\n')
+        state_files = {
+            "org-rule-guard": {
+                "denials.jsonl": b'{"rule_id": "keep-me"}\n',
+                "denials.jsonl.1": b'{"rule_id": "older"}\n',
+                "denials.jsonl.lock": b"",
+            },
+            "credential-guard": {
+                "denials.jsonl": b'{"rule_id": "credential-keep-me"}\n',
+                "denials.jsonl.1": b'{"rule_id": "credential-older"}\n',
+                "denials.jsonl.lock": b"",
+            },
+        }
+        for directory, files in state_files.items():
+            log_dir = os.path.join(state, directory)
+            os.makedirs(log_dir)
+            for name, contents in files.items():
+                with open(os.path.join(log_dir, name), "wb") as fh:
+                    fh.write(contents)
+        self.env.pop("ORG_RULE_GUARD_STATE_DIR", None)
+        self.env.pop("CREDENTIAL_GUARD_STATE_DIR", None)
+        self.env["XDG_STATE_HOME"] = state
+
         self.run_install()
+        provenance = os.path.join(self.hooks_dir, "org-rule-guard", "provenance.json")
+        self.assertTrue(os.path.exists(provenance))
         out = self.run_install("--uninstall")
         self.assertFalse(os.path.exists(self.dst()), out)
         self.assertFalse(os.path.exists(self.bundle_dst()), out)
-        with open(log) as fh:
-            self.assertEqual(fh.read(), '{"rule_id": "keep-me"}\n', out)
+        self.assertFalse(os.path.exists(provenance), out)
+        self.assertFalse(os.path.exists(os.path.dirname(provenance)), out)
+        for directory, files in state_files.items():
+            log_dir = os.path.join(state, directory)
+            self.assertTrue(os.path.isdir(log_dir), out)
+            for name, contents in files.items():
+                with open(os.path.join(log_dir, name), "rb") as fh:
+                    self.assertEqual(fh.read(), contents, name)
 
     def test_installed_hook_is_executable(self):
         self.run_install()

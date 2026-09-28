@@ -152,7 +152,9 @@ plan.
   path (plus one temp `$HOME` for the default destinations), covering every
   contract clause above including the refusal paths: no overwrite without
   `--force`, no settings write without `--wire`, `--uninstall` refusing a
-  file this folder did not install and leaving the denial log in place.
+  file this folder did not install, removing provenance, and retaining both
+  denial state directories because their bounded audit history survives an
+  uninstall.
 - `install.sh` — idempotent copy into `~/.claude/hooks/`. Never overwrites a
   hook already at the destination and never touches `settings.json` without
   `--wire`; `--uninstall` refuses a file this folder did not install. It also

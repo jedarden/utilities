@@ -1225,17 +1225,43 @@ time.sleep(60)
         self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
 
     def test_uninstall_removes_the_copies_and_leaves_settings_and_config(self):
-        """settings.json keeps its wiring and the config directory keeps the
+        """Uninstall removes install metadata but retains the audit state.
+
+        settings.json keeps its wiring and the config directory keeps the
         operator's instance table: an uninstaller that removed credential
-        material would destroy live AppRole secrets."""
+        material would destroy live AppRole secrets. The denial state is also
+        retained because its bounded history remains useful after uninstall.
+        """
+        state_home = os.path.join(self.root, "state")
+        state_dir = os.path.join(state_home, "credential-guard")
+        os.makedirs(state_dir)
+        state_files = {
+            "denials.jsonl": b'{"rule_id": "keep-me"}\n',
+            "denials.jsonl.1": b'{"rule_id": "older"}\n',
+            "denials.jsonl.lock": b"",
+        }
+        for name, contents in state_files.items():
+            with open(os.path.join(state_dir, name), "wb") as handle:
+                handle.write(contents)
+        self.env.pop("CREDENTIAL_GUARD_STATE_DIR", None)
+        self.env["XDG_STATE_HOME"] = state_home
+
         self.run_install("--wire")
         self.assertTrue(os.path.exists(self.settings + ".lock"))
+        provenance = os.path.join(self.hooks_dir, "agent-secrets", "provenance.json")
+        self.assertTrue(os.path.exists(provenance))
         out = self.run_install("--uninstall")
         self.assertFalse(os.path.exists(self.hook_dst()), out)
         self.assertFalse(os.path.exists(self.bin_dst()), out)
+        self.assertFalse(os.path.exists(provenance), out)
+        self.assertFalse(os.path.exists(os.path.dirname(provenance)), out)
         self.assertTrue(os.path.exists(self.settings), out)
         self.assertTrue(os.path.exists(self.conf()), out)
         self.assertFalse(os.path.exists(self.settings + ".lock"), out)
+        self.assertTrue(os.path.isdir(state_dir), out)
+        for name, contents in state_files.items():
+            with open(os.path.join(state_dir, name), "rb") as handle:
+                self.assertEqual(handle.read(), contents, name)
 
     def test_uninstall_refuses_a_file_this_copy_did_not_install(self):
         """A hand-edited copy at a destination is live enforcement this
