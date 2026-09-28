@@ -165,6 +165,26 @@ plan.
   approved seam for Phase 3(b)'s future rule-engine delegation.
 - `examples/settings.json` — the hook wiring for `~/.claude/settings.json`.
 
+### friction-receipt (v0.1.0)
+
+- `hooks/friction-receipt.py` — a fail-open Claude Code `SessionEnd` hook. It
+  writes one atomically replaced `twill-friction-receipt/v1` JSON object per
+  session to `${XDG_STATE_HOME:-~/.local/state}/twill/friction-receipts/`.
+  The record contains the canonical rule files and skills read from the
+  transcript, matching org-rule-guard denials, bounded unresolved error
+  signatures, and an `ended_mid_task` flag. Credential-shaped values are
+  redacted before all fields are bounded; raw transcript records are never
+  copied. The directory is mode 0700 and records are mode 0600.
+- `hooks/test_friction_receipt.py` — fixture-driven round-trip coverage for
+  rule reads, denials, unresolved errors, mid-task sessions, malformed input,
+  permissions, and redaction.
+- `install.sh` — idempotent copy to `~/.claude/hooks/friction-receipt.py`;
+  `--wire` appends the exact `SessionEnd` command once, while `--force` is
+  required to replace a hand-edited hook. It never removes receipts on
+  uninstall.
+- `README.md` — the versioned receipt schema, location, redaction and failure
+  contract, and install instructions.
+
 ## Data Models
 
 None. Configuration is files under `~/.config/bao-as/` (instance table and
