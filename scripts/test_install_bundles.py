@@ -374,8 +374,7 @@ sys.stdin.read()
             settings["hooks"]["PreToolUse"].pop()
         elif case == "current":
             own_entry["matcher"] = desired_matcher
-            if utility == "org-rule-guard":
-                own_entry["hooks"][0]["timeout"] = 10
+            own_entry["hooks"][0]["timeout"] = 10
         elif case == "legacy":
             self.assertEqual(utility, "org-rule-guard")
             own_entry["matcher"] = "Write|Edit|Bash"
@@ -994,10 +993,7 @@ sys.stdin.read()
                 self.assertEqual(handler["type"], "command")
                 self.assertEqual(handler["operator_note"], "keep this")
                 self.assertEqual(entry["operator_note"], "keep this too")
-                if utility == "agent-secrets":
-                    self.assertNotIn("timeout", handler)
-                else:
-                    self.assertEqual(handler["timeout"], 10)
+                self.assertEqual(handler["timeout"], 10)
                 self.assertEqual(merged["model"], "opus")
 
     def test_both_installers_conform_to_one_lock_and_merge_concurrently(self):
@@ -1142,6 +1138,7 @@ sys.stdin.read()
                 "hooks": [{
                     "type": "command",
                     "command": f"python3 {home / '.claude/hooks/credential-guard.py'}",
+                    "timeout": 10,
                 }],
             },
         )
