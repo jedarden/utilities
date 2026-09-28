@@ -91,7 +91,10 @@ class SelectiveInstallTests(unittest.TestCase):
             env.pop(name, None)
         return env
 
-    def run_install(self, checkout, utility, home, runtime, mode=None, settings=None):
+    def run_install(
+        self, checkout, utility, home, runtime, mode=None, settings=None,
+        env_overrides=None,
+    ):
         script = checkout / utility / "install.sh"
         command = ["/bin/sh", str(script)]
         if mode is not None:
@@ -99,6 +102,8 @@ class SelectiveInstallTests(unittest.TestCase):
         environment = self.clean_environment(home)
         if settings is not None:
             environment["CLAUDE_SETTINGS"] = str(settings)
+        if env_overrides is not None:
+            environment.update(env_overrides)
         return subprocess.run(
             command,
             cwd=runtime,
@@ -281,9 +286,20 @@ sys.stdin.read()
         )
         self.assertEqual(
             provenance,
-            {"utility": "agent-secrets", "version": version, "bundles": []},
+            {
+                "utility": "agent-secrets",
+                "version": version,
+                "runtime": {"python3": ">=3.9"},
+                "bundles": [],
+            },
         )
-        status = self.run_install(release, "agent-secrets", home, runtime, "--status")
+        status_path = self.temp_dir("agent-secrets-status-bin-")
+        (status_path / "dirname").symlink_to(shutil.which("dirname"))
+        (status_path / "cat").symlink_to(shutil.which("cat"))
+        status = self.run_install(
+            release, "agent-secrets", home, runtime, "--status",
+            env_overrides={"PATH": str(status_path)},
+        )
         self.assertEqual(status.returncode, 0, status.stderr)
         self.assertEqual(json.loads(status.stdout), provenance)
         self.assertFalse((release / "org-rule-guard").exists())
@@ -395,10 +411,17 @@ sys.stdin.read()
                     .splitlines()[0]
                     .strip()
                 ),
+                "runtime": {"python3": ">=3.9"},
                 "bundles": [declaration],
             },
         )
-        status = self.run_install(release, "org-rule-guard", home, runtime, "--status")
+        status_path = self.temp_dir("org-rule-guard-status-bin-")
+        (status_path / "dirname").symlink_to(shutil.which("dirname"))
+        (status_path / "cat").symlink_to(shutil.which("cat"))
+        status = self.run_install(
+            release, "org-rule-guard", home, runtime, "--status",
+            env_overrides={"PATH": str(status_path)},
+        )
         self.assertEqual(status.returncode, 0, status.stderr)
         self.assertEqual(json.loads(status.stdout), provenance)
         self.assertEqual(bundle_dst.read_bytes(), source_bytes)
@@ -1055,6 +1078,49 @@ sys.stdin.read()
             result.stderr,
         )
         self.assertFalse((home / ".claude").exists())
+
+    def test_install_requires_python39_before_writing(self):
+        checkout = self.stage_checkout()
+        missing_bin = self.temp_dir("missing-python3-bin-")
+        (missing_bin / "dirname").symlink_to(shutil.which("dirname"))
+
+        old_bin = self.temp_dir("old-python3-bin-")
+        (old_bin / "dirname").symlink_to(shutil.which("dirname"))
+        old_python = old_bin / "python3"
+        old_python.write_text(
+            "#!/bin/sh\nprintf '%s\\n' '3.8.18'\nexit 1\n",
+            encoding="utf-8",
+        )
+        old_python.chmod(0o755)
+
+        cases = (
+            (
+                "missing",
+                missing_bin,
+                "a working python3 interpreter is missing or could not start",
+            ),
+            ("too-old", old_bin, "found Python 3.8.18"),
+        )
+        for utility in ("agent-secrets", "org-rule-guard"):
+            for name, path, detail in cases:
+                with self.subTest(utility=utility, runtime=name):
+                    home = self.temp_dir(
+                        "python-prerequisite-home-%s-%s-" % (utility, name)
+                    )
+                    runtime = self.temp_dir(
+                        "python-prerequisite-runtime-%s-%s-" % (utility, name)
+                    )
+                    result = self.run_install(
+                        checkout, utility, home, runtime,
+                        env_overrides={"PATH": str(path)},
+                    )
+
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("Python 3.9 or newer is required", result.stderr)
+                    self.assertIn(detail, result.stderr)
+                    self.assertIn("Installation aborted", result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertFalse((home / ".claude").exists())
 
     def test_structure_check_rejects_manifest_pin_mismatched_with_sibling(self):
         checkout_parent = self.temp_dir("install-bundle-mismatch-")

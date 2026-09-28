@@ -173,7 +173,8 @@ uninstall aborts before removing installed files.
 
 Every successful install writes JSON provenance to
 `~/.claude/hooks/org-rule-guard/provenance.json` (or the corresponding
-`CLAUDE_HOOKS_DIR`). It records this utility's `VERSION` and the complete
+`CLAUDE_HOOKS_DIR`). It records this utility's `VERSION`, the runtime
+requirement `"runtime": {"python3": ">=3.9"}`, and the complete
 `bundled-dependencies.json` entries used for the copied companion. Query the
 installed copy without changing anything with:
 
@@ -185,6 +186,21 @@ The command prints that JSON and exits nonzero when no provenance record is
 present. A forced reinstall reports the previously installed utility version
 and bundle pins before replacing the hook, bundle, and provenance record.
 `--uninstall` removes the provenance record with those installed files.
+
+### Installed runtime prerequisite
+
+The installed org guard is wired as `python3
+~/.claude/hooks/org-rule-guard.py`; the copied credential companion is also
+Python. The host must therefore provide a working `python3` command at
+version 3.9 or newer. `install.sh` checks this before copying or wiring
+anything and aborts with a warning when the interpreter is missing, cannot
+start, or is too old. `--status` remains available without a working Python
+interpreter and reports the requirement from the provenance record.
+
+If an already-installed guard is run on a host without that prerequisite, the
+interpreter fails before the hook starts. The guard emits no denial or hook
+diagnostic; its fail-open contract allows the tool call to proceed, so the
+corresponding protection is absent until Python 3.9 or newer is restored.
 
 `CLAUDE_SETTINGS` defaults to `~/.claude/settings.json` and is used literally
 for `--wire`. An absolute value is used as an absolute path. A relative value

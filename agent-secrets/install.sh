@@ -38,6 +38,22 @@ case " $* " in *" --force"*) force=1 ;; esac
 wire=0
 case " $* " in *" --wire"*) wire=1 ;; esac
 
+require_python3() {
+  python_version=
+  if python_version=$(python3 -c \
+    'import sys; print(".".join(str(part) for part in sys.version_info[:3])); raise SystemExit(sys.version_info < (3, 9))' \
+    2>/dev/null)
+  then
+    return 0
+  fi
+  if [ -n "$python_version" ]; then
+    echo "install.sh: warning: Python 3.9 or newer is required; found Python $python_version. Installation aborted. Existing installed hooks fail open if their interpreter cannot start." >&2
+  else
+    echo "install.sh: warning: Python 3.9 or newer is required, but a working python3 interpreter is missing or could not start. Installation aborted. Existing installed hooks fail open if their interpreter cannot start." >&2
+  fi
+  exit 1
+}
+
 refuse() {
   echo "install.sh: refusing to remove $1 -- it is not this copy's output," >&2
   echo "            and a hand-edited copy is live enforcement this folder" >&2
@@ -85,6 +101,7 @@ if not version:
 provenance = {
     "utility": "agent-secrets",
     "version": version,
+    "runtime": {"python3": ">=3.9"},
     "bundles": [],
 }
 directory = os.path.dirname(destination)
@@ -120,6 +137,7 @@ case "${1:-}" in
     cat "$PROVENANCE_DST"
     exit 0 ;;
   --uninstall)
+    require_python3
     if [ -e "$HOOK_DST" ] && [ "$force" -ne 1 ] \
        && ! cmp -s "$HERE/hooks/credential-guard.py" "$HOOK_DST"; then
       refuse "$HOOK_DST"
@@ -205,6 +223,7 @@ PY
     exit 0 ;;
 esac
 
+require_python3
 install -d -m 700 "$(dirname "$HOOK_DST")" "$(dirname "$BIN_DST")" "$CONF_DIR" "$PROVENANCE_DIR"
 
 blocked=0

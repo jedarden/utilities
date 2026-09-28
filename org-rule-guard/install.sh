@@ -35,6 +35,22 @@ case " $* " in *" --force"*) force=1 ;; esac
 wire=0
 case " $* " in *" --wire"*) wire=1 ;; esac
 
+require_python3() {
+  python_version=
+  if python_version=$(python3 -c \
+    'import sys; print(".".join(str(part) for part in sys.version_info[:3])); raise SystemExit(sys.version_info < (3, 9))' \
+    2>/dev/null)
+  then
+    return 0
+  fi
+  if [ -n "$python_version" ]; then
+    echo "install.sh: warning: Python 3.9 or newer is required; found Python $python_version. Installation aborted. Existing installed hooks fail open if their interpreter cannot start." >&2
+  else
+    echo "install.sh: warning: Python 3.9 or newer is required, but a working python3 interpreter is missing or could not start. Installation aborted. Existing installed hooks fail open if their interpreter cannot start." >&2
+  fi
+  exit 1
+}
+
 case "${1:-}" in
   -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
   --status)
@@ -45,6 +61,7 @@ case "${1:-}" in
     cat "$PROVENANCE_DST"
     exit 0 ;;
   --uninstall)
+    require_python3
     if [ -e "$HOOK_DST" ] && [ "$force" -ne 1 ] \
        && ! cmp -s "$HERE/hooks/org-rule-guard.py" "$HOOK_DST"; then
       echo "install.sh: refusing to remove $HOOK_DST -- it is not this copy's output," >&2
@@ -135,6 +152,7 @@ PY
     exit 0 ;;
 esac
 
+require_python3
 BUNDLE_VERSION="$(python3 - "$HERE/bundled-dependencies.json" <<'PY'
 import json
 import sys
@@ -224,6 +242,7 @@ if not version:
 provenance = {
     "utility": "org-rule-guard",
     "version": version,
+    "runtime": {"python3": ">=3.9"},
     "bundles": manifest["bundles"],
 }
 directory = os.path.dirname(destination)
