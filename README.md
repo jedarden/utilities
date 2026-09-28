@@ -63,6 +63,17 @@ CLAUDE_SETTINGS="$SETTINGS" \
   ~/utilities-agent-secrets/agent-secrets/install.sh --wire
 ```
 
+The two wiring commands are order-independent. Starting from the same settings
+bytes, either order produces equivalent settings: all non-`PreToolUse` values
+and existing entry order are preserved, while the complete `PreToolUse` entry
+collection is the same regardless of which guard was appended first. Both
+orders use the same effective lock and retain one `.bak` containing the
+pre-wiring bytes. The combined installer report has the same facts and exit
+statuses as an order-independent collection; its line order follows the
+invocation order, and only the first changing run reports backup creation. A
+customized same-command entry is likewise reported as `preserved` in either
+order and is never rewritten implicitly.
+
 Each `--wire` run reads the current JSON and preserves every existing
 top-level setting, `hooks` event, and unrelated hook entry. It identifies its
 own `PreToolUse` entry by the exact command: a current matcher/timeout is left

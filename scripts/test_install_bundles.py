@@ -398,6 +398,140 @@ sys.stdin.read()
         entries.remove(matching[0])
         return json.dumps(preserved, indent=2).encode("utf-8") + b"\n"
 
+    def combined_wire_fixture(self, home, customized_org=False):
+        """Return one starting settings object for both order variants."""
+
+        settings = {
+            "model": "opus",
+            "permissions": {"allow": ["Read"]},
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "printf session-start",
+                    }],
+                }],
+                "PreToolUse": [{
+                    "matcher": "Read",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "printf existing-pretooluse",
+                    }],
+                }],
+                "PostToolUse": [{
+                    "matcher": "Write",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "printf post-tooluse",
+                    }],
+                }],
+            },
+        }
+        if customized_org:
+            settings["hooks"]["PreToolUse"].append({
+                "matcher": "Read",
+                "hooks": [{
+                    "type": "command",
+                    "command": (
+                        f"python3 {home / '.claude/hooks/org-rule-guard.py'}"
+                    ),
+                    "timeout": 7,
+                }],
+            })
+        return settings
+
+    def run_combined_wire_order(self, order, customized_org=False):
+        """Run both installers from identical starting settings bytes."""
+
+        checkout = self.stage_checkout()
+        home = self.temp_dir("order-independent-wire-home-")
+        runtime = self.temp_dir("order-independent-wire-runtime-")
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        original = self.combined_wire_fixture(home, customized_org)
+        original_bytes = json.dumps(original, indent=2).encode("utf-8") + b"\n"
+        settings.write_bytes(original_bytes)
+
+        results = []
+        for utility in order:
+            results.append(
+                self.run_install(
+                    checkout, utility, home, runtime,
+                    mode="--wire", settings=settings,
+                )
+            )
+        return {
+            "home": home,
+            "settings": settings,
+            "original": original,
+            "original_bytes": original_bytes,
+            "results": results,
+        }
+
+    def canonical_combined_settings(self, settings, home):
+        """Compare settings while making guard entry order insignificant."""
+
+        canonical = json.loads(json.dumps(settings))
+        prefix = f"python3 {home}/"
+        entries = canonical["hooks"]["PreToolUse"]
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                command = hook.get("command")
+                if isinstance(command, str) and command.startswith(prefix):
+                    hook["command"] = "python3 ~/" + command[len(prefix):]
+        canonical["hooks"]["PreToolUse"] = sorted(
+            entries, key=lambda entry: json.dumps(entry, sort_keys=True)
+        )
+        return canonical
+
+    def combined_report(self, run):
+        """Return the order-independent report facts emitted by both runs."""
+
+        home = run["home"]
+        replacements = sorted(
+            {str(home), str(home.resolve())}, key=len, reverse=True
+        )
+        stdout = []
+        stderr = []
+        returncodes = []
+        for result in run["results"]:
+            returncodes.append(result.returncode)
+            for line in result.stdout.splitlines():
+                for replacement in replacements:
+                    line = line.replace(replacement, "<HOME>")
+                stdout.append(line)
+            for line in result.stderr.splitlines():
+                for replacement in replacements:
+                    line = line.replace(replacement, "<HOME>")
+                stderr.append(line)
+        return {
+            "returncodes": sorted(returncodes),
+            "stdout": sorted(stdout),
+            "stderr": sorted(stderr),
+        }
+
+    def assert_combined_runs_match(self, first, second):
+        self.assertEqual(
+            self.canonical_combined_settings(
+                json.loads(first["settings"].read_text(encoding="utf-8")),
+                first["home"],
+            ),
+            self.canonical_combined_settings(
+                json.loads(second["settings"].read_text(encoding="utf-8")),
+                second["home"],
+            ),
+        )
+        self.assertEqual(self.combined_report(first), self.combined_report(second))
+
+        for run in (first, second):
+            settings = run["settings"]
+            backup = Path(str(settings) + ".bak")
+            lock = Path(str(settings.resolve()) + ".lock")
+            self.assertTrue(backup.is_file())
+            self.assertEqual(backup.read_bytes(), run["original_bytes"])
+            self.assertTrue(lock.is_file())
+            self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
     def run_installed_hook(self, hook, home, runtime, payload, state):
         env = self.clean_environment(home)
         env["XDG_CONFIG_HOME"] = str(state / "config")
@@ -744,6 +878,49 @@ sys.stdin.read()
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("already", result.stdout)
         self.assertEqual(settings.read_bytes(), after_first_wire)
+
+    def test_combined_wire_is_order_independent(self):
+        """Either append order has the same settings, backup, lock, and report facts."""
+        orders = (
+            ("org-rule-guard", "agent-secrets"),
+            ("agent-secrets", "org-rule-guard"),
+        )
+        first, second = [self.run_combined_wire_order(order) for order in orders]
+
+        self.assert_combined_runs_match(first, second)
+        report = self.combined_report(first)
+        self.assertEqual(report["returncodes"], [0, 0])
+        self.assertEqual(
+            sum(line.startswith("backup     ") for line in report["stdout"]), 1
+        )
+        self.assertEqual(
+            sum(line.startswith("wired      ") for line in report["stdout"]), 2
+        )
+        self.assertEqual(report["stderr"], [])
+
+    def test_combined_wire_preserves_customization_in_either_order(self):
+        """A customized guard entry reports preserved without order-dependent changes."""
+        orders = (
+            ("org-rule-guard", "agent-secrets"),
+            ("agent-secrets", "org-rule-guard"),
+        )
+        first, second = [
+            self.run_combined_wire_order(order, customized_org=True)
+            for order in orders
+        ]
+
+        self.assert_combined_runs_match(first, second)
+        report = self.combined_report(first)
+        self.assertEqual(report["returncodes"], [0, 2])
+        self.assertEqual(
+            sum(line.startswith("backup     ") for line in report["stdout"]), 1
+        )
+        self.assertEqual(
+            sum(line.startswith("wired      ") for line in report["stdout"]), 1
+        )
+        self.assertEqual(
+            sum(line.startswith("preserved  ") for line in report["stderr"]), 1
+        )
 
     def test_fresh_wire_creates_mode_0600_settings_for_each_utility(self):
         """A fresh default settings path is private even with a permissive umask."""
