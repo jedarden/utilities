@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse guard: blocks Write/Edit/MultiEdit/Bash calls that violate hard org rules.
+"""PreToolUse guard: blocks file-write and Bash calls that violate hard org rules.
 
 FAILS OPEN by design. Any unexpected input, parse failure, or internal error
 exits 0 (allow). A NEEDLE fleet must never be wedged by this hook — a missed
 violation is recoverable, a stuck fleet is not.
 
-Write/Edit/MultiEdit rules:
+Write/Edit/MultiEdit/NotebookEdit rules:
   1. no .github/workflows/*            (GitHub Actions are disabled org-wide)
   2. no `kind: Job` / `kind: CronJob`  (ArgoCD cannot prune their pods)
   3. no `image: ...:latest`            (breaks rollback)
@@ -73,7 +73,7 @@ RULE_IDS = (
     RULE_MUTATING_KUBECTL, RULE_CREDENTIAL, RULE_COMMIT_ALL,
     RULE_COMMIT_NO_PATHSPEC, RULE_GIT_ADD_ALL,
 )
-SUPPORTED_TOOLS = ("Write", "Edit", "MultiEdit", "Bash")
+SUPPORTED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit", "Bash")
 
 # The hook input for this invocation, kept for the denial log (session_id,
 # cwd, tool). A hook process handles exactly one tool call, so a module
@@ -532,8 +532,9 @@ def check_write(path, body):
 
 
 def check_file_tool(tool, tool_input):
-    """Inspect the file contents carried by Write, Edit, or MultiEdit."""
-    path = tool_input.get("file_path") or ""
+    """Inspect the file contents carried by a file-writing tool."""
+    path_key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    path = tool_input.get(path_key) or ""
     if not path:
         return
     if tool == "MultiEdit":
@@ -545,6 +546,9 @@ def check_file_tool(tool, tool_input):
         ]
         # Check once even when edits is empty so path-only rules still apply.
         check_write(path, "\n".join(bodies))
+        return
+    if tool == "NotebookEdit":
+        check_write(path, tool_input.get("new_source") or "")
         return
     body = "\n".join(
         value for value in (tool_input.get("content"), tool_input.get("new_string"))

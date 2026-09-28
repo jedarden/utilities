@@ -52,6 +52,21 @@ The gate also verifies the shipped hook settings examples against the output
 of their installers. Those checks are contract checks rather than additional
 dependency allowlists.
 
+## Hook matcher inventory
+
+The shipped `PreToolUse` settings entries for `org-rule-guard` and
+`agent-secrets` must match the installer output and cover every rule-relevant
+tool handled by the hooks: `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and
+`Bash`. `NotebookEdit` carries notebook cell text in `new_source` and the
+notebook filename in `notebook_path`; omitting it from a matcher bypasses the
+same file-content and credential rules that apply to other write tools.
+
+`scripts/test_hook_composition.py` loads each hook's `SUPPORTED_TOOLS` inventory
+and asserts that every listed tool is matched by the combined shipped settings.
+When a hook gains another write-capable tool, update its inventory, per-tool
+payload extraction, installer matcher, settings examples, and this reference in
+one change.
+
 ## Package-manager command inventory
 
 The following regular expressions are searched line-by-line in shell files,

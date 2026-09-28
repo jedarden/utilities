@@ -248,6 +248,10 @@ class HookProcess(unittest.TestCase):
             ("MultiEdit", {"file_path": "/tmp/config.py", "edits": [
                 {"old_string": "x", "new_string": "access_key = " + aws_key}]},
              "AWS access key id"),
+            ("NotebookEdit", {"notebook_path": "/tmp/analysis.ipynb",
+                               "cell_id": "cell-1", "new_source":
+                               "token = " + token("github_pat_", 60)},
+             "GitHub fine-grained PAT"),
             ("Bash", {"command": "bao kv put secret/app token="
                       + token("hvs.", 28)},
              "Vault/OpenBao token"),
@@ -280,6 +284,12 @@ class HookProcess(unittest.TestCase):
                       {"old_string": "c", "new_string": token("npm_", 36)}]}})
         self.assertTrue(denied(r))
 
+    def test_notebook_edit_new_source_denied(self):
+        r = run_hook({"tool_name": "NotebookEdit", "tool_input": {
+            "notebook_path": "/tmp/analysis.ipynb", "cell_id": "cell-1",
+            "new_source": "KEY = '" + token("sk-ant-", 48) + "'"}})
+        self.assertTrue(denied(r))
+
     def test_bash_command_with_token_denied(self):
         r = run_hook({"tool_name": "Bash", "tool_input": {
             "command": "curl -H 'Authorization: Bearer " + token("ghp_") + "' https://api.example"}})
@@ -289,6 +299,7 @@ class HookProcess(unittest.TestCase):
         write_secret = token("ghp_")
         edit_secret = token("glpat-", 24)
         multiedit_secret = token("npm_", 36)
+        notebook_secret = token("github_pat_", 60)
         bash_secret = token("hvs.", 28)
         cases = (
             ("Write", {
@@ -311,6 +322,13 @@ class HookProcess(unittest.TestCase):
                                   + "-multiedit-payload-after",
                 }],
             }, "MultiEdit.edits[].new_string", multiedit_secret),
+            ("NotebookEdit", {
+                "notebook_path": "/tmp/notebook-payload-path-marker.ipynb",
+                "cell_id": "cell-1",
+                "new_source": "notebook-payload-before-"
+                              + notebook_secret
+                              + "-notebook-payload-after",
+            }, "NotebookEdit.new_source", notebook_secret),
             ("Bash", {
                 "command": "printf '%s' 'bash-command-before-"
                            + bash_secret
@@ -497,6 +515,9 @@ class HookProcess(unittest.TestCase):
                       "new_string": "KEY = '" + placeholder("sk-ant-", 48) + "'"}),
             ("MultiEdit", {"file_path": "/tmp/config.py", "edits": [
                 {"old_string": "x", "new_string": placeholder("npm_", 36)}]}),
+            ("NotebookEdit", {"notebook_path": "/tmp/notes.ipynb",
+                               "cell_id": "cell-1",
+                               "new_source": placeholder("ghp_", 40)}),
             ("Bash", {"command": "curl -H 'Authorization: Bearer "
                        + placeholder("ghp_", 40) + "' https://api.example"}),
         )
@@ -515,6 +536,10 @@ class HookProcess(unittest.TestCase):
             ("MultiEdit", {"file_path": "/tmp/fixture.py", "edits": [
                 {"old_string": "x", "new_string": "fixture = "
                  + token("npm_", 36) + "  # gitleaks:allow"}]}),
+            ("NotebookEdit", {"notebook_path": "/tmp/fixture.ipynb",
+                               "cell_id": "cell-1", "new_source":
+                               "fixture = " + token("ghp_")
+                               + "  # gitleaks:allow"}),
             ("Bash", {"command": "printf '%s\\n' '" + token("ghp_")
                        + "' # gitleaks:allow"}),
         )
@@ -531,6 +556,8 @@ class HookProcess(unittest.TestCase):
             ("MultiEdit", {"file_path": "/tmp/config.py", "edits": [
                 {"old_string": "debug = false", "new_string": "debug = true"},
                 {"old_string": "port = 80", "new_string": "port = 8080"}]}),
+            ("NotebookEdit", {"notebook_path": "/tmp/notes.ipynb",
+                               "cell_id": "cell-1", "new_source": "print(42)"}),
             ("Bash", {"command": "printf '%s\\n' 'deployment complete'"}),
         )
         for tool, tool_input in cases:
@@ -556,6 +583,8 @@ class HookProcess(unittest.TestCase):
             {"tool_name": "Edit", "tool_input": {"new_string": {"not": "text"}}},
             {"tool_name": "MultiEdit", "tool_input": {
                 "edits": [{"new_string": {"not": "text"}}]}},
+            {"tool_name": "NotebookEdit", "tool_input": {
+                "new_source": {"not": "text"}}},
             {"tool_name": "Bash", "tool_input": {"command": {"not": "text"}}},
         )
         for payload in cases:
@@ -564,6 +593,10 @@ class HookProcess(unittest.TestCase):
 
     def test_unknown_tool_without_fields_allowed(self):
         self.assertIsNone(run_hook({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}))
+
+    def test_unknown_tool_with_write_like_field_is_allowed(self):
+        self.assertIsNone(run_hook({"tool_name": "FutureWrite", "tool_input": {
+            "content": token("ghp_")}}))
 
 
 class Install(unittest.TestCase):
@@ -749,10 +782,25 @@ time.sleep(60)
             s = json.load(fh)
         entries = s["hooks"]["PreToolUse"]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.hook_dst())
         self.assertFalse(os.path.exists(self.settings + ".bak"), out)
+
+    def test_wire_refreshes_the_previous_shipped_matcher_in_place(self):
+        command = "python3 %s" % self.hook_dst()
+        with open(self.settings, "w") as fh:
+            json.dump({"hooks": {"PreToolUse": [{
+                "matcher": "Write|Edit|MultiEdit|Bash",
+                "hooks": [{"type": "command", "command": command}],
+            }]}}, fh)
+
+        out = self.run_install("--wire")
+
+        with open(self.settings) as fh:
+            entry = json.load(fh)["hooks"]["PreToolUse"][0]
+        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
+        self.assertIn("refreshed", out)
 
     def test_wire_creates_a_private_persistent_lock_file(self):
         previous_umask = os.umask(0)
@@ -849,7 +897,7 @@ time.sleep(60)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         with open(self.settings) as fh:
             entry = json.load(fh)["hooks"]["PreToolUse"][0]
-        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertNotIn("timeout", entry["hooks"][0])
         self.assertEqual(entry["description"], "operator policy")
         self.assertIn("refreshed", result.stdout.decode())
@@ -1174,7 +1222,7 @@ time.sleep(60)
             entries = json.load(fh)["hooks"]["PreToolUse"]
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0]["matcher"], "WebFetch")
-        self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
 
     def test_uninstall_removes_the_copies_and_leaves_settings_and_config(self):
         """settings.json keeps its wiring and the config directory keeps the

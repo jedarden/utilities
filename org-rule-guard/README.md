@@ -43,11 +43,11 @@ Git protections.
 
 | Rule | Slug(s) | Scope | What it stops |
 |---|---|---|---|
-| [1](hooks/org-rule-guard.py#L434) | [`github-actions-workflow`](hooks/org-rule-guard.py#L57) | any Write/Edit/MultiEdit write to `.github/workflows/*` | GitHub Actions, disabled org-wide; CI runs on Argo Workflows in `iad-ci` |
-| [2](hooks/org-rule-guard.py#L444) | [`k8s-job-cronjob`](hooks/org-rule-guard.py#L58) | Write/Edit/MultiEdit of `.yaml`/`.yml` only | `kind: Job` and `kind: CronJob`, which ArgoCD cannot prune |
-| [3](hooks/org-rule-guard.py#L453) | [`latest-image-tag`](hooks/org-rule-guard.py#L59) | Write/Edit/MultiEdit of `.yaml`/`.yml` only | `image: …:latest`, which breaks rollback |
+| [1](hooks/org-rule-guard.py#L434) | [`github-actions-workflow`](hooks/org-rule-guard.py#L57) | any Write/Edit/MultiEdit/NotebookEdit write to `.github/workflows/*` | GitHub Actions, disabled org-wide; CI runs on Argo Workflows in `iad-ci` |
+| [2](hooks/org-rule-guard.py#L444) | [`k8s-job-cronjob`](hooks/org-rule-guard.py#L58) | Write/Edit/MultiEdit/NotebookEdit of `.yaml`/`.yml` only | `kind: Job` and `kind: CronJob`, which ArgoCD cannot prune |
+| [3](hooks/org-rule-guard.py#L453) | [`latest-image-tag`](hooks/org-rule-guard.py#L59) | Write/Edit/MultiEdit/NotebookEdit of `.yaml`/`.yml` only | `image: …:latest`, which breaks rollback |
 | [4](hooks/org-rule-guard.py#L325) | [`mutating-kubectl`](hooks/org-rule-guard.py#L60) | Bash | `kubectl apply/delete/patch/scale/…`; read-only verbs, `exec`, `cp`, `logs` and Argo Workflow submission stay allowed |
-| [5](hooks/org-rule-guard.py#L405) | [`credential-value`](hooks/org-rule-guard.py#L61) | **every** Write/Edit/MultiEdit file type, and Bash | a credential *value*; secrets travel by reference |
+| [5](hooks/org-rule-guard.py#L405) | [`credential-value`](hooks/org-rule-guard.py#L61) | **every** Write/Edit/MultiEdit/NotebookEdit file type, and Bash | a credential *value*; secrets travel by reference |
 | [6](hooks/org-rule-guard.py#L221) | [`git-add-all`](hooks/org-rule-guard.py#L62), [`git-commit-all`](hooks/org-rule-guard.py#L63), [`git-commit-no-pathspec`](hooks/org-rule-guard.py#L64) | Bash | blanket `git add -A`/`.`/`--all`, `git commit -a`, and bare `git commit -m`, which sweep in a sibling worker's staged files |
 
 Rule 6 has three slugs because blanket staging and the two commit failure
@@ -57,7 +57,8 @@ Rules 2–3 match real manifest lines only, never comments, so a document that
 
 ## PreToolUse behavior
 
-Claude Code invokes the hook for `Write`, `Edit`, `MultiEdit`, and `Bash` through the
+Claude Code invokes the hook for `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and
+`Bash` through the
 `PreToolUse` matcher shown in the [settings example](examples/settings.json).
 The hook reads one JSON payload from stdin and handles one tool call per
 process. The first matching rule denies the call and writes one JSON object to
@@ -98,7 +99,7 @@ settings.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|Bash",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
@@ -117,13 +118,14 @@ bundle, and merges this same entry. A bare `install.sh` prints it without
 changing settings; it still stages the bundle when it installs.
 
 The entry is identified by its exact command. The current shipped entry uses
-the `Write|Edit|MultiEdit|Bash` matcher and timeout `10`, so re-running
-`--wire` is a no-op. The complete known-legacy inventory contains exactly one
-entry: an entry whose object has only `matcher` and `hooks`, whose matcher is
-`Write|Edit|Bash`, and whose matching handler has only `type`, `command`, and
-`timeout`, with timeout `10`. Its `command` must still equal this installer's
-exact command. That pre-`MultiEdit` shipped entry is refreshed in place during
-an upgrade; no other shape is a known legacy entry.
+the `Write|Edit|MultiEdit|NotebookEdit|Bash` matcher and timeout `10`, so re-running
+`--wire` is a no-op. The complete known-legacy inventory contains the previous
+`Write|Edit|MultiEdit|Bash` matcher and the pre-`MultiEdit` `Write|Edit|Bash`
+matcher. Each recognized entry has an object containing only `matcher` and
+`hooks`, and a matching handler containing only `type`, `command`, and
+`timeout`, with timeout `10`; its `command` must still equal this installer's
+exact command. Both are refreshed in place during an upgrade; no other shape
+is a known legacy entry.
 
 If a same-command entry has any other matcher or timeout, `--wire` preserves
 the settings file byte-for-byte, writes exactly one `preserved` report to
@@ -134,7 +136,7 @@ stdout may still contain the ordinary hook/provenance installation messages;
 the customization report is never sent to stdout. Exit 2 is therefore a
 customization conflict, not a successful warning. `--wire --force` exits 0 and
 replaces the matcher and timeout fields on every matching exact-command entry
-with this release's fields (matcher `Write|Edit|MultiEdit|Bash`, timeout `10`),
+with this release's fields (matcher `Write|Edit|MultiEdit|NotebookEdit|Bash`, timeout `10`),
 while preserving each command, handler type, other fields, and unrelated
 settings. If the command is absent, the entry is appended.
 
@@ -241,8 +243,8 @@ byte-for-byte unchanged. It never appends a hook entry to such a file.
 ### Composed execution
 
 The combined configuration has two independent `PreToolUse` entries: the org
-guard matches `Write|Edit|MultiEdit|Bash`, and the optional credential guard matches
-`Write|Edit|MultiEdit|Bash`. Claude Code runs all matching hook handlers in
+guard matches `Write|Edit|MultiEdit|NotebookEdit|Bash`, and the optional credential
+guard matches `Write|Edit|MultiEdit|NotebookEdit|Bash`. Claude Code runs all matching hook handlers in
 parallel, so the order of entries in `settings.json` is for readability only,
 not an execution-order guarantee. Both handlers receive the same payload.
 Their decisions are combined with `deny` taking precedence, so an allow from
@@ -361,7 +363,7 @@ Manual writers that do not honor that lock are outside the atomicity contract.
 |---|---|
 | `ts` | UTC ISO-8601 with a `Z` suffix, matching `jq`'s `todate`, so timestamps sort and compare as plain strings |
 | `rule_id` | the slug from the table above |
-| `tool` | `Write`, `Edit`, `MultiEdit`, `Bash`, … |
+| `tool` | `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `Bash`, … |
 | `cwd` | the working directory from the hook input, falling back to the process's own |
 | `session_id` | from the hook input when present, else empty |
 | `fragment` | a redacted, whitespace-flattened, 80-character-truncated piece of what matched |

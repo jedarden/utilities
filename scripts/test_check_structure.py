@@ -190,7 +190,7 @@ class StructureCheckerTests(unittest.TestCase):
             "    with open(path) as handle:\n"
             "        settings = json.load(handle)\n"
             "settings.setdefault(\"hooks\", {}).setdefault(\"PreToolUse\", []).append({\n"
-            "    \"matcher\": \"Write|Edit|MultiEdit|Bash\",\n"
+            "    \"matcher\": \"Write|Edit|MultiEdit|NotebookEdit|Bash\",\n"
             f'    "hooks": [{{"type": "command", "command": "python3 " + hook{timeout_field}}}]\n'
             "})\n"
             "with open(path, \"w\") as handle:\n"
@@ -212,7 +212,7 @@ class StructureCheckerTests(unittest.TestCase):
                 "hooks": {
                     "PreToolUse": [
                         {
-                            "matcher": "Write|Edit|MultiEdit|Bash",
+                            "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
                             "hooks": [{
                                 "type": "command",
                                 "command": "python3 ~/.claude/hooks/org-rule-guard.py",
@@ -220,7 +220,7 @@ class StructureCheckerTests(unittest.TestCase):
                             }],
                         },
                         {
-                            "matcher": "Write|Edit|MultiEdit|Bash",
+                            "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
                             "hooks": [{
                                 "type": "command",
                                 "command": "python3 ~/.claude/hooks/credential-guard.py",
@@ -237,7 +237,7 @@ class StructureCheckerTests(unittest.TestCase):
             json.dumps({
                 "hooks": {
                     "PreToolUse": [{
-                        "matcher": "Write|Edit|MultiEdit|Bash",
+                        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
                         "hooks": [{
                             "type": "command",
                             "command": "python3 ~/.claude/hooks/org-rule-guard.py",

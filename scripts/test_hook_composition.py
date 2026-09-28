@@ -8,6 +8,7 @@ credential coverage.
 """
 
 import json
+import importlib.util
 import os
 import re
 import subprocess
@@ -21,6 +22,17 @@ ROOT = Path(__file__).resolve().parent.parent
 ORG_HOOK = ROOT / "org-rule-guard" / "hooks" / "org-rule-guard.py"
 CREDENTIAL_HOOK = ROOT / "agent-secrets" / "hooks" / "credential-guard.py"
 COMBINED_SETTINGS = ROOT / "docs" / "examples" / "settings-both.json"
+
+
+def load_hook(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ORG_MODULE = load_hook(ORG_HOOK, "org_rule_guard_for_composition")
+CREDENTIAL_MODULE = load_hook(CREDENTIAL_HOOK, "credential_guard_for_composition")
 
 
 def alnum(length, seed=0):
@@ -47,6 +59,21 @@ def multiedit_payload(content, path="notes.txt"):
         "tool_input": {
             "file_path": path,
             "edits": [{"old_string": "placeholder", "new_string": content}],
+        },
+        "session_id": "composition-test",
+        "cwd": str(ROOT),
+    }
+
+
+def notebook_edit_payload(content, path="notes.ipynb"):
+    return {
+        "tool_name": "NotebookEdit",
+        "tool_input": {
+            "notebook_path": path,
+            "cell_id": "cell-1",
+            "cell_type": "code",
+            "edit_mode": "replace",
+            "new_source": content,
         },
         "session_id": "composition-test",
         "cwd": str(ROOT),
@@ -90,8 +117,8 @@ class HookComposition(unittest.TestCase):
             "python3 ~/.claude/hooks/org-rule-guard.py",
             "python3 ~/.claude/hooks/credential-guard.py",
         ])
-        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|Bash")
-        self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
+        self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["timeout"], 10)
         self.assertNotIn("timeout", entries[1]["hooks"][0])
 
@@ -101,20 +128,29 @@ class HookComposition(unittest.TestCase):
 
         inspected_tools = {
             "python3 ~/.claude/hooks/org-rule-guard.py":
-                {"Write", "Edit", "MultiEdit", "Bash"},
+                set(ORG_MODULE.SUPPORTED_TOOLS),
             "python3 ~/.claude/hooks/credential-guard.py":
-                {"Write", "Edit", "MultiEdit", "Bash"},
+                set(CREDENTIAL_MODULE.SUPPORTED_TOOLS),
         }
+        expected_tools = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"}
         for entry in entries:
             command = entry["hooks"][0]["command"]
             with self.subTest(command=command):
                 self.assertIn(command, inspected_tools)
+                self.assertEqual(inspected_tools[command], expected_tools)
                 missing = {
                     tool for tool in inspected_tools[command]
                     if re.fullmatch(entry["matcher"], tool) is None
                 }
                 self.assertEqual(missing, set(),
                                  "matcher omits inspected tool classes")
+
+    def test_notebook_edit_credential_is_denied_by_both_hooks(self):
+        payload = notebook_edit_payload("stored value: " + token(seed=17))
+        with tempfile.TemporaryDirectory(prefix="hook-composition-") as directory:
+            state_home = Path(directory)
+            self.assertTrue(denied(run_hook(ORG_HOOK, payload, state_home)))
+            self.assertTrue(denied(run_hook(CREDENTIAL_HOOK, payload, state_home)))
 
     def test_org_guard_inspects_multiedit_file_rules(self):
         cases = (

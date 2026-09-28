@@ -6,7 +6,7 @@ alone:
 
 | Part | What it does |
 |---|---|
-| `hooks/credential-guard.py` | Claude Code `PreToolUse` hook. Denies any Write / Edit / MultiEdit / Bash call whose body carries a high-signal credential shape (GitHub, GitLab, npm, AWS, Google, Slack, Stripe, Anthropic, OpenAI, Vault/OpenBao tokens, PEM private keys). Fails open. The [pattern inventory and update process](docs/credential-patterns.md) are part of this utility's contract. |
+| `hooks/credential-guard.py` | Claude Code `PreToolUse` hook. Denies any Write / Edit / MultiEdit / NotebookEdit / Bash call whose body carries a high-signal credential shape (GitHub, GitLab, npm, AWS, Google, Slack, Stripe, Anthropic, OpenAI, Vault/OpenBao tokens, PEM private keys). Fails open. The [pattern inventory and update process](docs/credential-patterns.md) are part of this utility's contract. |
 | `bin/bao-as` | `bao-as <instance> <command...>` — AppRole login to one named OpenBao/Vault instance with credentials passed as `@file`, then `exec` the command with the token only in its environment. |
 | `policies/*.hcl` | Prefix-scoped policy templates: one agent ↔ one prefix, writer, reader, and the superuser carve-outs that deny `sys/audit*` and `sys/seal`. |
 
@@ -49,10 +49,11 @@ destination without `--force`. `--wire` is the upgrade mode: it replaces the
 installed hook and `bao-as` with the copies from the selected checkout and
 merges or upgrades the hook entry in `settings.json`. The entry is identified
 by its exact command. The current shipped entry uses matcher
-`Write|Edit|MultiEdit|Bash` and has no `timeout` field, so re-running `--wire`
-is a no-op. `agent-secrets` has no known legacy shipped entry: the pre-
-`MultiEdit` matcher `Write|Edit|Bash`, with or without a timeout, is not an
-in-place refresh candidate and is treated as customized.
+`Write|Edit|MultiEdit|NotebookEdit|Bash` and has no `timeout` field, so re-running `--wire`
+is a no-op. The previous shipped matcher `Write|Edit|MultiEdit|Bash`, with no
+timeout, is refreshed in place during an upgrade. The pre-`MultiEdit` matcher
+`Write|Edit|Bash`, with or without a timeout, is not an in-place refresh
+candidate and is treated as customized.
 
 If a same-command entry has any other matcher or timeout, `--wire` preserves
 the settings file byte-for-byte, writes exactly one `preserved` report to
@@ -63,7 +64,7 @@ stdout may still contain the ordinary hook/provenance installation messages;
 the customization report is never sent to stdout. Exit 2 is therefore a
 customization conflict, not a successful warning. `--wire --force` exits 0 and
 replaces the matcher and timeout fields on every matching exact-command entry
-with this release's fields (matcher `Write|Edit|MultiEdit|Bash`, no timeout),
+with this release's fields (matcher `Write|Edit|MultiEdit|NotebookEdit|Bash`, no timeout),
 while preserving each command, handler type, other fields, and unrelated
 settings. If the command is absent, the entry is appended.
 
@@ -215,7 +216,8 @@ python3 -m unittest discover -s ~/utilities/agent-secrets/policies -v  # policy-
 
 Claude Code calls it before every matching tool use with the call's input on
 stdin. It scans every text field a value could hide in — `content`,
-`new_string`, each entry of a MultiEdit `edits` array, a Bash `command` — and
+`new_string`, each entry of a MultiEdit `edits` array, a NotebookEdit
+`new_source`, or a Bash `command` — and
 prints a deny decision if a pattern matches. The deny message tells the agent
 what to do instead (write the path, use a pipe or `@file`, record the result
 of a check rather than the credential).

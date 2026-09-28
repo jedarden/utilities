@@ -58,7 +58,7 @@ plan.
 ### agent-secrets (v0.1.0)
 
 - `hooks/credential-guard.py` — Claude Code PreToolUse hook. Denies Write,
-  Edit, MultiEdit and Bash calls whose body carries a high-signal credential
+  Edit, MultiEdit, NotebookEdit and Bash calls whose body carries a high-signal credential
   value. Fails open. Placeholders and `gitleaks:allow` pass. Its built-in
   pattern inventory, high-signal definition, and update process live in
   [`agent-secrets/docs/credential-patterns.md`](../../agent-secrets/docs/credential-patterns.md)
@@ -71,7 +71,7 @@ plan.
   best-effort and does not change the enforcement decision.
 - `hooks/test_credential_guard.py` — unittest suite; fixtures are built at
   runtime so the test file itself never contains a token-shaped literal. It
-  covers the built-in matcher, denied Write/Edit/MultiEdit/Bash calls,
+  covers the built-in matcher, denied Write/Edit/MultiEdit/NotebookEdit/Bash calls,
   placeholder and `gitleaks:allow` pass paths for each tool shape, malformed
   and unexpected-input fail-open behavior, property-only denial records and
   logging failures, and the installer contract.
@@ -131,8 +131,8 @@ plan.
   `~/.claude/hooks/org-rule-guard.py`: no GitHub Actions workflows, no
   `kind: Job`/`CronJob`, no `:latest`, no mutating `kubectl`, no credential
   values, no blanket `git commit`. Its file-content rules inspect Write, Edit,
-  and MultiEdit calls; its shell rules inspect Bash calls, and the shipped
-  matcher covers all four tool classes. Same six rules, same deny messages,
+  MultiEdit and NotebookEdit calls; its shell rules inspect Bash calls, and the shipped
+  matcher covers all five tool classes. Same six rules, same deny messages,
   same fail-open contract as the live hook. Every denial additionally appends one
   JSON line (`ts`, `rule_id`, `tool`, `cwd`, `session_id`, redacted 80-char
   fragment) to `${XDG_STATE_HOME:-~/.local/state}/org-rule-guard/denials.jsonl`.

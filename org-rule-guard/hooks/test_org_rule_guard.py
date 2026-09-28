@@ -137,6 +137,21 @@ def write(path, content, session="sess-1", cwd="/repo"):
             "session_id": session, "cwd": cwd}
 
 
+def notebook_edit(path, source, session="sess-1", cwd="/repo"):
+    return {
+        "tool_name": "NotebookEdit",
+        "tool_input": {
+            "notebook_path": path,
+            "cell_id": "cell-1",
+            "cell_type": "code",
+            "edit_mode": "replace",
+            "new_source": source,
+        },
+        "session_id": session,
+        "cwd": cwd,
+    }
+
+
 def bash(command, session="sess-1", cwd="/repo"):
     return {"tool_name": "Bash", "tool_input": {"command": command},
             "session_id": session, "cwd": cwd}
@@ -276,6 +291,16 @@ class Decisions(unittest.TestCase):
     def test_latest_tag_in_a_comment_is_allowed(self):
         decision, _ = invoke(write("docs/deploy.yaml", LATEST_COMMENT_MANIFEST))
         self.assertFalse(denied(decision))
+
+    def test_notebook_edit_applies_path_and_credential_rules(self):
+        cases = (
+            notebook_edit(WORKFLOWS_PATH, "name: build\non: push\n"),
+            notebook_edit("notes.ipynb", CREDENTIAL_BODY),
+        )
+        for payload in cases:
+            with self.subTest(payload=payload):
+                decision, _ = invoke(payload)
+                self.assertTrue(denied(decision))
 
     def test_each_denial_has_the_pretooluse_protocol_shape(self):
         """Every rule must return Claude Code's deny envelope and exit cleanly."""
@@ -842,7 +867,7 @@ time.sleep(60)
             s = json.load(fh)
         entries = s["hooks"]["PreToolUse"]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.dst())
         self.assertFalse(os.path.exists(self.settings + ".bak"), out)
@@ -918,7 +943,7 @@ time.sleep(60)
         with open(self.settings) as fh:
             settings = json.load(fh)
         entry = settings["hooks"]["PreToolUse"][0]
-        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entry["hooks"][0]["timeout"], 10)
         self.assertIn("refreshed", out)
         self.assertTrue(os.path.exists(self.settings + ".bak"), out)
@@ -967,7 +992,7 @@ time.sleep(60)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         with open(self.settings) as fh:
             entry = json.load(fh)["hooks"]["PreToolUse"][0]
-        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entry["hooks"][0]["timeout"], 10)
         self.assertEqual(entry["description"], "operator policy")
         self.assertIn("refreshed", result.stdout.decode())
@@ -1226,7 +1251,7 @@ time.sleep(60)
             entries = json.load(fh)["hooks"]["PreToolUse"]
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0]["matcher"], "WebFetch")
-        self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|Bash")
+        self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
 
     def test_uninstall_removes_the_hook_and_leaves_settings(self):
         self.run_install("--wire")

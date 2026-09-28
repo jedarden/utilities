@@ -272,8 +272,11 @@ requested_path, hook, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 # instead of the settings file it names.
 path = os.path.realpath(requested_path)
 cmd = f"python3 {hook}"
-matcher = "Write|Edit|MultiEdit|Bash"
-legacy_matcher = "Write|Edit|Bash"
+matcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
+legacy_matchers = {
+    "Write|Edit|MultiEdit|Bash",
+    "Write|Edit|Bash",
+}
 lock_path = path + ".lock"
 settings_dir = os.path.dirname(os.path.abspath(path))
 settings_name = os.path.basename(path)
@@ -434,7 +437,7 @@ try:
     ]
     legacy = [
         (entry, handler) for entry, handler in matching
-        if entry.get("matcher") == legacy_matcher
+        if entry.get("matcher") in legacy_matchers
         and handler.get("timeout") == 10
         and set(entry) == {"matcher", "hooks"}
         and set(handler) == {"type", "command", "timeout"}

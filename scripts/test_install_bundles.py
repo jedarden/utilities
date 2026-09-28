@@ -204,7 +204,7 @@ sys.stdin.read()
 
         own_entry = settings["hooks"]["PreToolUse"][-1]
         own_entry["hooks"][0]["command"] = command
-        desired_matcher = "Write|Edit|MultiEdit|Bash"
+        desired_matcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
         if case == "append":
             settings["hooks"]["PreToolUse"].pop()
         elif case == "current":
@@ -704,7 +704,7 @@ sys.stdin.read()
         self.assertEqual(len(pretooluse), 2)
         self.assertEqual(pretooluse[0]["matcher"], "Read")
         self.assertEqual(pretooluse[1], {
-            "matcher": "Write|Edit|MultiEdit|Bash",
+            "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
             "hooks": [{
                 "type": "command",
                 "command": command,
@@ -806,7 +806,7 @@ sys.stdin.read()
                 merged = json.loads(settings.read_text(encoding="utf-8"))
                 entry = merged["hooks"]["PreToolUse"][0]
                 handler = entry["hooks"][0]
-                self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|Bash")
+                self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
                 self.assertEqual(handler["command"], command)
                 self.assertEqual(handler["type"], "command")
                 self.assertEqual(handler["operator_note"], "keep this")
@@ -944,7 +944,7 @@ sys.stdin.read()
         self.assertEqual(
             entries[f"python3 {home / '.claude/hooks/org-rule-guard.py'}"],
             {
-                "matcher": "Write|Edit|MultiEdit|Bash",
+                "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
                 "hooks": [{
                     "type": "command",
                     "command": f"python3 {home / '.claude/hooks/org-rule-guard.py'}",
@@ -955,7 +955,7 @@ sys.stdin.read()
         self.assertEqual(
             entries[f"python3 {home / '.claude/hooks/credential-guard.py'}"],
             {
-                "matcher": "Write|Edit|MultiEdit|Bash",
+                "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
                 "hooks": [{
                     "type": "command",
                     "command": f"python3 {home / '.claude/hooks/credential-guard.py'}",

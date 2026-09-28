@@ -253,7 +253,8 @@ requested_path, hook, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 # instead of the settings file it names.
 path = os.path.realpath(requested_path)
 cmd = f"python3 {hook}"
-matcher = "Write|Edit|MultiEdit|Bash"
+matcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
+legacy_matcher = "Write|Edit|MultiEdit|Bash"
 lock_path = path + ".lock"
 settings_dir = os.path.dirname(os.path.abspath(path))
 settings_name = os.path.basename(path)
@@ -412,14 +413,25 @@ try:
         (entry, handler) for entry, handler in matching
         if entry.get("matcher") == matcher and "timeout" not in handler
     ]
-    customized = [pair for pair in matching if pair not in current]
+    legacy = [
+        (entry, handler) for entry, handler in matching
+        if entry.get("matcher") == legacy_matcher and "timeout" not in handler
+    ]
+    recognized = current + legacy
+    customized = [pair for pair in matching if pair not in recognized]
     if customized and not force:
         print(f"preserved  {requested_path}: existing {cmd} wiring is customized; "
               "use --wire --force to replace its matcher/timeout (exit 2)",
               file=sys.stderr)
         raise SystemExit(2)
-    if current and not customized:
+    if current and not customized and not legacy:
         print(f"already    {requested_path}")
+    elif legacy and not force:
+        snapshot_backup()
+        for entry, _handler in legacy:
+            entry["matcher"] = matcher
+        print(f"refreshed  {requested_path}")
+        write_settings(s, source_mode)
     else:
         snapshot_backup()
         if matching:

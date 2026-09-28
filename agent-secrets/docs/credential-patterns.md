@@ -33,6 +33,24 @@ one repeated character, or a line marked `gitleaks:allow`. These exemptions
 are part of the guard contract and do not lower the high-signal bar for new
 patterns.
 
+## Tool coverage
+
+The credential guard's `PreToolUse` matcher and `SUPPORTED_TOOLS` inventory must
+cover every Claude Code tool whose input can write file content:
+
+| Tool | Credential-bearing input |
+|---|---|
+| `Write` | `content` |
+| `Edit` | `new_string` |
+| `MultiEdit` | each `edits[].new_string` |
+| `NotebookEdit` | `new_source` for `notebook_path` |
+| `Bash` | `command` |
+
+The matcher, this inventory, and the regression tests must be updated together
+when Claude Code adds another write-capable tool. `NotebookEdit` edits notebook
+cell content rather than a `file_path`, so its `new_source` field is handled
+explicitly by the hook.
+
 ## Built-in inventory
 
 The table records the regex, its minimum shape, and whether the matcher looks

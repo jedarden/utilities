@@ -8,7 +8,7 @@ into a file it writes, an edit it makes, or a command line it runs. Those all
 land in the session transcript (and in shell history and `ps`), which is
 logged, cached, and impossible to recall.
 
-This hook inspects the *input* of Write, Edit, MultiEdit and Bash calls and
+This hook inspects the *input* of Write, Edit, MultiEdit, NotebookEdit and Bash calls and
 denies any that carry a high-signal credential shape. It does NOT see tool
 *output* -- an agent that prints a secret with `cat` has still leaked it. The
 defense for that side is a habit, not a hook: check presence (`wc -c`,
@@ -36,7 +36,7 @@ of the form  [{"label": "Acme API key", "pattern": "\\bacme_[A-Za-z0-9]{32}"}]
 Each entry is compiled and appended; a malformed file is ignored (fail open).
 
 Wire it in ~/.claude/settings.json (see ../examples/settings.json):
-  "PreToolUse": [{"matcher": "Write|Edit|MultiEdit|Bash",
+  "PreToolUse": [{"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
                   "hooks": [{"type": "command",
                              "command": "python3 ~/.claude/hooks/credential-guard.py"}]}]
 """
@@ -60,6 +60,8 @@ MAX_LOG_FIELD_CHARS = 512
 # payload data through the deny API while ensuring the log contains metadata
 # from the same invocation that produced the decision.
 _PAYLOAD = {}
+
+SUPPORTED_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit", "Bash")
 
 # High-signal shapes only. Every pattern has a vendor prefix AND a length floor
 # at the real token width, so naming a token type in prose never trips it. A
@@ -268,12 +270,19 @@ def reason_for(label, where):
 
 def bodies_from(tool, tool_input):
     """Every text field a tool call could carry a value in."""
+    if tool not in SUPPORTED_TOOLS:
+        return []
     if tool == "Bash":
         return [("command", tool_input.get("command") or "")]
+    path_key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    path = tool_input.get(path_key) or "file"
+    if tool == "NotebookEdit":
+        source = tool_input.get("new_source")
+        return [(f"new_source for {path}", source)] if isinstance(source, str) and source else []
     out = []
     for key in ("content", "new_string", "new_source"):
         if tool_input.get(key):
-            out.append((f"{key} for {tool_input.get('file_path') or 'file'}", tool_input[key]))
+            out.append((f"{key} for {path}", tool_input[key]))
     for edit in tool_input.get("edits") or []:      # MultiEdit
         if isinstance(edit, dict) and edit.get("new_string"):
             out.append((f"edit of {tool_input.get('file_path') or 'file'}", edit["new_string"]))
@@ -301,6 +310,8 @@ def main():
     if not isinstance(tool_input, dict):
         return ALLOW
     tool = payload.get("tool_name") or ""
+    if tool not in SUPPORTED_TOOLS:
+        return ALLOW
     global _PAYLOAD
     _PAYLOAD = payload
     try:
