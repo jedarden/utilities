@@ -118,6 +118,16 @@ class DocumentationSync(unittest.TestCase):
             tuple(re.findall(r"`([^`]+)`", row)), checker.REQUIRED_ROOT_FILES
         )
 
+    def test_documented_readme_license_coverage_matches_checker(self):
+        lines = STRUCTURE_DOC.read_text(encoding="utf-8").splitlines()
+        row = next(
+            line for line in lines if line.startswith("| Required README license coverage |")
+        )
+        self.assertEqual(
+            tuple(re.findall(r"`([^`]+)`", row)),
+            checker.README_LICENSE_COVERAGE_PHRASES,
+        )
+
     def test_documented_sibling_rules_match_checker(self):
         expected = list(checker.SIBLING_REFERENCE_RULES)
         expected.append(checker.SIBLING_NORMALIZED_IMPORT_RULE)
@@ -144,7 +154,13 @@ class StructureCheckerTests(unittest.TestCase):
     def write_utility(self, name):
         utility = self.fixture / name
         utility.mkdir(parents=True, exist_ok=True)
-        (utility / "README.md").write_text(f"# {name}\n", encoding="utf-8")
+        (utility / "README.md").write_text(
+            f"# {name}\n\n"
+            "The source files in this utility are licensed under the MIT License. "
+            "Installation does not change that coverage. "
+            "The installer does not copy a separate license file.\n",
+            encoding="utf-8",
+        )
         (utility / "VERSION").write_text("1.0.0\n", encoding="utf-8")
         (utility / "CHANGELOG.md").write_text(
             "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Initial release.\n",
@@ -269,6 +285,23 @@ class StructureCheckerTests(unittest.TestCase):
         self.assertIn(
             "1 utilities have README.md, VERSION, CHANGELOG.md, install.sh",
             result.stdout,
+        )
+
+    def test_missing_readme_license_coverage_phrase_fails(self):
+        utility = self.write_utility("alpha")
+        (utility / "README.md").write_text(
+            "# alpha\n\nLicensed under the MIT License.\n",
+            encoding="utf-8",
+        )
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "alpha/README.md: missing license coverage phrase "
+            "'does not change that coverage'",
+            result.stderr,
         )
 
     def test_missing_required_root_file_fails_with_file_named(self):

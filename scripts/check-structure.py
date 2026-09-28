@@ -25,6 +25,11 @@ from pathlib import PurePosixPath
 
 REQUIRED_FILES = ("README.md", "VERSION", "CHANGELOG.md", "install.sh")
 REQUIRED_ROOT_FILES = ("LICENSE",)
+README_LICENSE_COVERAGE_PHRASES = (
+    "licensed under the MIT License",
+    "does not change that coverage",
+    "does not copy a separate license file",
+)
 BUNDLE_MANIFEST = "bundled-dependencies.json"
 REPOSITORY_DIRECTORIES = {"docs", "scripts"}
 TEXT_SUFFIXES = {
@@ -189,6 +194,26 @@ def required_root_file_errors(root: Path) -> list[str]:
         elif not path.is_file():
             errors.append(f"{path}: required root file is missing")
     return errors
+
+
+def readme_license_coverage_errors(utility: Path) -> list[str]:
+    """Require each utility README to state the installed license coverage."""
+
+    readme = utility / "README.md"
+    if readme.is_symlink() or not readme.is_file():
+        return []
+
+    try:
+        text = readme.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return [f"{readme}: cannot read license coverage statement ({error})"]
+
+    normalized_text = " ".join(text.split())
+    return [
+        f"{readme}: missing license coverage phrase {phrase!r}"
+        for phrase in README_LICENSE_COVERAGE_PHRASES
+        if phrase not in normalized_text
+    ]
 
 
 def changelog_errors(utility: Path) -> list[str]:
@@ -892,6 +917,7 @@ def main() -> int:
     for utility in candidates:
         if utility.is_symlink():
             continue
+        errors.extend(readme_license_coverage_errors(utility))
         errors.extend(changelog_errors(utility))
         errors.extend(shell_constraint_errors(utility))
         errors.extend(package_install_errors(utility))
@@ -918,7 +944,8 @@ def main() -> int:
     print(
         "check-structure: "
         f"{len(candidates)} utilities have README.md, VERSION, CHANGELOG.md, "
-        "install.sh; repository root has LICENSE; "
+        "install.sh; repository root has LICENSE; utility READMEs state MIT "
+        "license coverage; "
         "and pass the POSIX-shell, Python-3.9, Python-stdlib, package-install, and "
         "cross-utility checks; README Folder table, shipped hook settings "
         "examples, and combined hook settings agree"

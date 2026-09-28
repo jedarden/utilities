@@ -29,6 +29,7 @@ Each utility must own these files:
 |---|---|
 | Required utility files | `README.md`, `VERSION`, `CHANGELOG.md`, `install.sh` |
 | Required release note | `CHANGELOG.md` contains `## [VERSION] - YYYY-MM-DD` |
+| Required README license coverage | `licensed under the MIT License`, `does not change that coverage`, `does not copy a separate license file` |
 
 The checker also rejects utility symlinks and links inside a utility that
 resolve outside that utility. Shell files must use a POSIX `sh` shebang.
@@ -179,9 +180,10 @@ the contents of the offending line.
 Make policy changes as one reviewable change:
 
 1. Add or change the executable entry in `PACKAGE_INSTALL_PATTERNS`,
-   `PYTHON39_STDLIB_MODULES`/its documented source expression, or
-   `SIBLING_REFERENCE_RULES` (and `SIBLING_NORMALIZED_IMPORT_RULE` when the
-   normalized-import behavior changes).
+   `PYTHON39_STDLIB_MODULES`/its documented source expression,
+   `README_LICENSE_COVERAGE_PHRASES`, or `SIBLING_REFERENCE_RULES` (and
+   `SIBLING_NORMALIZED_IMPORT_RULE` when the normalized-import behavior
+   changes).
 2. Add a focused positive fixture and a nearby non-match or allowed-path
    fixture to `scripts/test_check_structure.py`. For a new package-manager or
    sibling rule, assert the diagnostic text as well as the exit status.

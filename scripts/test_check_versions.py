@@ -56,7 +56,13 @@ class VersionCheckerTests(unittest.TestCase):
             self.utility_names.append(name)
         utility = self.fixture / name
         utility.mkdir(parents=True, exist_ok=True)
-        (utility / "README.md").write_text(f"# {name}\n", encoding="utf-8")
+        (utility / "README.md").write_text(
+            f"# {name}\n\n"
+            "The source files in this utility are licensed under the MIT License. "
+            "Installation does not change that coverage. "
+            "The installer does not copy a separate license file.\n",
+            encoding="utf-8",
+        )
         (utility / "VERSION").write_text(f"{version}\n", encoding="utf-8")
         (utility / "CHANGELOG.md").write_text(
             f"# Changelog\n\n## [{version}] - 2026-01-01\n\n- Initial release.\n",
