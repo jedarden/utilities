@@ -1290,6 +1290,75 @@ time.sleep(60)
         self.assertFalse(os.path.exists(self.dst()))
         self.assertTrue(os.path.exists(self.settings))
         self.assertFalse(os.path.exists(self.settings + ".lock"))
+        with open(self.settings) as handle:
+            self.assertEqual(json.load(handle)["hooks"]["PreToolUse"], [])
+
+    def test_uninstall_preserves_customized_wiring_without_force(self):
+        self.run_install("--wire")
+        with open(self.settings) as handle:
+            settings = json.load(handle)
+        settings["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 11
+        with open(self.settings, "w") as handle:
+            json.dump(settings, handle)
+
+        proc = self.run_install_raw("--uninstall")
+        self.assertEqual(proc.returncode, 2, proc.stdout.decode())
+        self.assertIn("customized", proc.stderr.decode())
+        self.assertTrue(os.path.exists(self.dst()))
+        with open(self.settings) as handle:
+            self.assertEqual(
+                json.load(handle)["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"],
+                11,
+            )
+
+        self.run_install("--uninstall", "--force")
+        self.assertFalse(os.path.exists(self.dst()))
+        with open(self.settings) as handle:
+            self.assertEqual(json.load(handle)["hooks"]["PreToolUse"], [])
+
+    def test_uninstall_refuses_malformed_settings_before_removing_files(self):
+        self.run_install("--wire")
+        original = b'{"hooks": [\n'
+        with open(self.settings, "wb") as handle:
+            handle.write(original)
+
+        proc = self.run_install_raw("--uninstall")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout.decode())
+        self.assertIn("invalid JSON", proc.stderr.decode())
+        self.assertTrue(os.path.exists(self.dst()))
+        with open(self.settings, "rb") as handle:
+            self.assertEqual(handle.read(), original)
+
+    def test_uninstall_after_both_installed_removes_only_this_entry(self):
+        agent_script = os.path.abspath(os.path.join(
+            HERE, os.pardir, os.pardir, "agent-secrets", "install.sh"))
+        agent_env = dict(
+            self.env,
+            CLAUDE_HOOKS_DIR=os.path.join(self.root, "agent-hooks"),
+            BIN_DIR=os.path.join(self.root, "agent-bin"),
+            BAO_AS_CONFIG_DIR=os.path.join(self.root, "agent-config"),
+        )
+        self.run_install("--wire")
+        proc = subprocess.run(["bash", agent_script, "--wire"],
+                              capture_output=True, env=agent_env, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+
+        self.run_install("--uninstall")
+        with open(self.settings) as handle:
+            entries = json.load(handle)["hooks"]["PreToolUse"]
+        self.assertEqual([entry["hooks"][0]["command"] for entry in entries], [
+            "python3 " + os.path.join(agent_env["CLAUDE_HOOKS_DIR"],
+                                      "credential-guard.py"),
+        ])
+        self.assertFalse(os.path.exists(self.dst()))
+        self.assertTrue(os.path.exists(os.path.join(
+            agent_env["CLAUDE_HOOKS_DIR"], "credential-guard.py")))
+
+        proc = subprocess.run(["bash", agent_script, "--uninstall"],
+                              capture_output=True, env=agent_env, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+        with open(self.settings) as handle:
+            self.assertEqual(json.load(handle)["hooks"]["PreToolUse"], [])
 
     def test_uninstall_refuses_a_hook_this_copy_did_not_install(self):
         """On a machine still running the pre-port hook, the file at the

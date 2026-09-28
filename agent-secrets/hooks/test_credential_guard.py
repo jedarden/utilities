@@ -1226,14 +1226,9 @@ time.sleep(60)
         self.assertEqual(entries[0]["matcher"], "WebFetch")
         self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
 
-    def test_uninstall_removes_the_copies_and_leaves_settings_and_config(self):
-        """Uninstall removes install metadata but retains the audit state.
-
-        settings.json keeps its wiring and the config directory keeps the
-        operator's instance table: an uninstaller that removed credential
-        material would destroy live AppRole secrets. The denial state is also
-        retained because its bounded history remains useful after uninstall.
-        """
+    def test_uninstall_removes_its_entry_and_leaves_settings_and_config(self):
+        """Uninstall removes its wiring and install metadata but retains the
+        settings file, operator config, and audit state."""
         state_home = os.path.join(self.root, "state")
         state_dir = os.path.join(state_home, "credential-guard")
         os.makedirs(state_dir)
@@ -1260,10 +1255,73 @@ time.sleep(60)
         self.assertTrue(os.path.exists(self.settings), out)
         self.assertTrue(os.path.exists(self.conf()), out)
         self.assertFalse(os.path.exists(self.settings + ".lock"), out)
+        with open(self.settings) as handle:
+            self.assertEqual(json.load(handle)["hooks"]["PreToolUse"], [])
         self.assertTrue(os.path.isdir(state_dir), out)
         for name, contents in state_files.items():
             with open(os.path.join(state_dir, name), "rb") as handle:
                 self.assertEqual(handle.read(), contents, name)
+
+    def test_uninstall_preserves_customized_wiring_without_force(self):
+        self.run_install("--wire")
+        with open(self.settings) as handle:
+            settings = json.load(handle)
+        settings["hooks"]["PreToolUse"][0]["matcher"] = "WebFetch"
+        with open(self.settings, "w") as handle:
+            json.dump(settings, handle)
+
+        proc = self.run_install_raw("--uninstall")
+        self.assertEqual(proc.returncode, 2, proc.stdout.decode())
+        self.assertIn("customized", proc.stderr.decode())
+        self.assertTrue(os.path.exists(self.hook_dst()))
+        with open(self.settings) as handle:
+            self.assertEqual(json.load(handle)["hooks"]["PreToolUse"][0]["matcher"],
+                             "WebFetch")
+
+        self.run_install("--uninstall", "--force")
+        self.assertFalse(os.path.exists(self.hook_dst()))
+        with open(self.settings) as handle:
+            self.assertEqual(json.load(handle)["hooks"]["PreToolUse"], [])
+
+    def test_uninstall_refuses_malformed_settings_before_removing_files(self):
+        self.run_install("--wire")
+        original = b'{"hooks": [\n'
+        with open(self.settings, "wb") as handle:
+            handle.write(original)
+
+        proc = self.run_install_raw("--uninstall")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout.decode())
+        self.assertIn("invalid JSON", proc.stderr.decode())
+        self.assertTrue(os.path.exists(self.hook_dst()))
+        with open(self.settings, "rb") as handle:
+            self.assertEqual(handle.read(), original)
+
+    def test_uninstall_after_both_installed_removes_only_this_entry(self):
+        org_script = os.path.abspath(os.path.join(
+            HERE, os.pardir, os.pardir, "org-rule-guard", "install.sh"))
+        org_env = dict(self.env,
+                       CLAUDE_HOOKS_DIR=os.path.join(self.root, "org-hooks"))
+        self.run_install("--wire")
+        proc = subprocess.run(["bash", org_script, "--wire"],
+                              capture_output=True, env=org_env, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+
+        self.run_install("--uninstall")
+        with open(self.settings) as handle:
+            entries = json.load(handle)["hooks"]["PreToolUse"]
+        self.assertEqual([entry["hooks"][0]["command"] for entry in entries], [
+            "python3 " + os.path.join(org_env["CLAUDE_HOOKS_DIR"],
+                                      "org-rule-guard.py"),
+        ])
+        self.assertFalse(os.path.exists(self.hook_dst()))
+        self.assertTrue(os.path.exists(os.path.join(
+            org_env["CLAUDE_HOOKS_DIR"], "org-rule-guard.py")))
+
+        proc = subprocess.run(["bash", org_script, "--uninstall"],
+                              capture_output=True, env=org_env, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
+        with open(self.settings) as handle:
+            self.assertEqual(json.load(handle)["hooks"]["PreToolUse"], [])
 
     def test_uninstall_refuses_a_file_this_copy_did_not_install(self):
         """A hand-edited copy at a destination is live enforcement this

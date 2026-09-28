@@ -104,8 +104,8 @@ cannot create the lock, or cannot acquire it within 30 seconds, prints a
 refusal to stderr, exits nonzero, and does not modify the settings file. Set
 `CLAUDE_SETTINGS_LOCK_TIMEOUT` to a different positive number when an
 environment needs a different finite deadline; waiting is never indefinite.
-`--uninstall` uses the same lock and deadline before removing the lock file,
-then removes it if present. If the lock cannot be acquired or removed,
+`--uninstall` uses the same lock and deadline while unwiring its settings entry,
+then removes the lock file. If the lock cannot be acquired or removed,
 uninstall aborts before removing installed files.
 
 Every successful install writes JSON provenance to
@@ -191,6 +191,23 @@ mode-`0600` backup. Delete the backup only after the live settings are verified
 and this rollback point is no longer needed; the next wiring change creates a
 new snapshot when no backup is present.
 
+`--uninstall` also removes this install's `PreToolUse` handler from the live
+settings file. It identifies handlers by the same exact command used by
+`--wire` (`python3 <installed-hook-path>`), and removes the shipped current
+entry or a recognized legacy entry while leaving unrelated handlers and
+settings intact. If that exact-command handler has a customized matcher or
+timeout, uninstall preserves it and exits 2; use `--uninstall --force` only
+when that customized handler is also yours and should be removed. A shared
+`PreToolUse` entry keeps its other handlers. The settings file is rewritten
+atomically under the lock, and an invalid/unreadable settings file or any
+unwiring failure aborts before installed files are removed, so uninstall does
+not leave a command pointing at a deleted hook. Uninstall never restores the
+whole `.bak` and never changes it; inspect and manually restore that snapshot
+only after reviewing later settings edits. If an operator deletes the hook
+without unwiring it, Claude still tries `python3 <missing-hook>` for every
+matching tool call; Python reports the missing file and the intended guard is
+absent, so the dangling entry should be removed immediately.
+
 If an existing settings file is malformed JSON, or its top-level value is not
 an object, `--wire` creates the pre-wiring `.bak` when it is owed, prints a
 clear refusal to stderr, exits nonzero, and leaves the settings file
@@ -235,10 +252,10 @@ is never removed. It intentionally leaves `settings.json`,
 log is retained because it is audit history that remains useful after the
 guard is uninstalled; uninstall must not erase evidence. Remove that state
 directory manually only after reviewing or exporting the history.
-After uninstalling, remove this utility's `PreToolUse` command from
-`settings.json` yourself; keep the entry if another installed copy still uses
-that same destination. The source checkout can then be deleted if it is no
-longer needed.
+The uninstaller removes this utility's wiring before deleting its installed
+hook. If another installed copy has a different exact command, that entry is
+left in place. The source checkout can then be deleted if it is no longer
+needed.
 
 Run the tests:
 

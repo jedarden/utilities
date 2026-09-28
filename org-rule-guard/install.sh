@@ -7,9 +7,10 @@
 #                               PreToolUse entry into ~/.claude/settings.json
 #   ./install.sh --wire --force replace customized wiring fields too
 #   ./install.sh --status print provenance and check installed-file drift
-#   ./install.sh --uninstall    remove the installed hook and settings lock;
-#                               retain denial state for audit history
-#                               (settings left alone)
+#   ./install.sh --uninstall    remove the installed hook, unwire its
+#                               exact-command settings entry, and remove the
+#                               settings lock; retain denial state for audit
+#                               history (settings backup left alone)
 #
 # The credential guard is a pinned install-time bundle.  The source lives in
 # agent-secrets in this checkout, but the installed copy lives under this
@@ -185,17 +186,25 @@ case "${1:-}" in
       echo "            and a hand-edited bundle may be live enforcement. Pass --force." >&2
       exit 1
     fi
-    python3 - "$SETTINGS" <<'PY'
+    python3 - "$SETTINGS" "$HOOK_DST" "$force" <<'PY'
 import errno
 import fcntl
+import json
 import math
 import os
+import stat
 import sys
+import tempfile
 import time
 
-requested_path = sys.argv[1]
+requested_path, hook, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 path = os.path.realpath(requested_path)
+cmd = f"python3 {hook}"
+matcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
+hook_timeout = 10
+legacy_matchers = {matcher, "Write|Edit|Bash"}
 lock_path = path + ".lock"
+settings_dir = os.path.dirname(os.path.abspath(path))
 lock_timeout = 30.0
 raw_timeout = os.environ.get("CLAUDE_SETTINGS_LOCK_TIMEOUT")
 if raw_timeout is not None:
@@ -212,49 +221,145 @@ if raw_timeout is not None:
               file=sys.stderr)
         raise SystemExit(1)
 
+if not os.path.isdir(settings_dir):
+    print(f"unwired    {requested_path}: settings parent is absent")
+    raise SystemExit(0)
+
 try:
-    lock_fd = os.open(lock_path, os.O_RDWR)
-except FileNotFoundError:
-    lock_fd = None
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(lock_fd, 0o600)
 except OSError as exc:
-    print(f"install.sh: refusing to uninstall: could not open settings lock "
+    if "lock_fd" in locals():
+        os.close(lock_fd)
+    print(f"install.sh: refusing to uninstall: could not create settings lock "
           f"{lock_path}: {exc}; installed files were not removed",
           file=sys.stderr)
     raise SystemExit(1)
 
-if lock_fd is not None:
+def write_settings(settings, source_mode):
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.org-rule-guard.",
+        suffix=".tmp", dir=settings_dir
+    )
     try:
-        os.fchmod(lock_fd, 0o600)
-        deadline = time.monotonic() + lock_timeout
-        while True:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if exc.errno not in (errno.EACCES, errno.EAGAIN):
-                    raise
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    print(f"install.sh: refusing to uninstall: could not "
-                          f"acquire settings lock {lock_path} within "
-                          f"{lock_timeout:g} seconds; installed files were "
-                          "not removed", file=sys.stderr)
-                    raise SystemExit(1)
-                time.sleep(min(0.05, remaining))
-        try:
-            os.unlink(lock_path)
-        except FileNotFoundError:
-            pass
-    except OSError as exc:
-        print(f"install.sh: refusing to uninstall: could not remove settings "
-              f"lock {lock_path}: {exc}; installed files were not removed",
-              file=sys.stderr)
-        raise SystemExit(1)
+        os.fchmod(fd, source_mode)
+        with os.fdopen(fd, "w") as handle:
+            fd = None
+            json.dump(settings, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
     finally:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+try:
+    deadline = time.monotonic() + lock_timeout
+    while True:
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        finally:
-            os.close(lock_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print(f"install.sh: refusing to uninstall: could not acquire "
+                      f"settings lock {lock_path} within {lock_timeout:g} "
+                      "seconds; installed files were not removed",
+                      file=sys.stderr)
+                raise SystemExit(1)
+            time.sleep(min(0.05, remaining))
+
+    if not os.path.exists(path):
+        print(f"unwired    {requested_path}: settings file is absent")
+    else:
+        source_mode = stat.S_IMODE(os.stat(path).st_mode)
+        try:
+            with open(path) as handle:
+                settings = json.load(handle)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            print(f"install.sh: refusing to uninstall {requested_path}: "
+                  f"invalid JSON ({exc}); installed files were not removed",
+                  file=sys.stderr)
+            raise SystemExit(1)
+        if not isinstance(settings, dict):
+            print(f"install.sh: refusing to uninstall {requested_path}: "
+                  "top-level value must be a JSON object; installed files "
+                  "were not removed", file=sys.stderr)
+            raise SystemExit(1)
+        hooks = settings.get("hooks", {})
+        pre = hooks.get("PreToolUse", []) if isinstance(hooks, dict) else None
+        if pre is None or not isinstance(pre, list):
+            print(f"install.sh: refusing to uninstall {requested_path}: "
+                  "hooks.PreToolUse must be a JSON array; installed files "
+                  "were not removed", file=sys.stderr)
+            raise SystemExit(1)
+
+        matching = []
+        for entry in pre:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                continue
+            for handler in entry["hooks"]:
+                if isinstance(handler, dict) and handler.get("command") == cmd:
+                    matching.append((entry, handler))
+
+        def recognized(entry, handler):
+            return (
+                entry.get("matcher") == matcher
+                and handler.get("timeout") == hook_timeout
+            ) or (
+                entry.get("matcher") in legacy_matchers
+                and "timeout" not in handler
+            )
+
+        customized = [(entry, handler) for entry, handler in matching
+                      if not recognized(entry, handler)]
+        if customized and not force:
+            print(f"install.sh: preserved {requested_path}: existing {cmd} "
+                  "wiring is customized; use --uninstall --force to remove "
+                  "it (exit 2)", file=sys.stderr)
+            raise SystemExit(2)
+
+        if not matching:
+            print(f"unwired    {requested_path}: no matching {cmd} entry")
+        else:
+            removed = 0
+            new_pre = []
+            for entry in pre:
+                if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                    new_pre.append(entry)
+                    continue
+                kept = []
+                for handler in entry["hooks"]:
+                    if (isinstance(handler, dict)
+                            and handler.get("command") == cmd
+                            and (force or recognized(entry, handler))):
+                        removed += 1
+                    else:
+                        kept.append(handler)
+                if kept:
+                    if len(kept) != len(entry["hooks"]):
+                        entry["hooks"] = kept
+                    new_pre.append(entry)
+            hooks["PreToolUse"] = new_pre
+            write_settings(settings, source_mode)
+            print(f"unwired    {requested_path}: removed {removed} {cmd} entry")
+finally:
+    try:
+        os.unlink(lock_path)
+    except FileNotFoundError:
+        pass
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 PY
     rm -f "$HOOK_DST" "$BUNDLE_DST" "$PROVENANCE_DST"
     # The provenance record describes this installed copy and is removed with
