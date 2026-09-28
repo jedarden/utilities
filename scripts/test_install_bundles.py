@@ -108,6 +108,23 @@ class SelectiveInstallTests(unittest.TestCase):
             timeout=30,
         )
 
+    def run_install_with_umask(
+        self, checkout, utility, home, runtime, mode, umask, settings=None
+    ):
+        script = checkout / utility / "install.sh"
+        environment = self.clean_environment(home)
+        if settings is not None:
+            environment["CLAUDE_SETTINGS"] = str(settings)
+        return subprocess.run(
+            ["/bin/sh", str(script), mode],
+            cwd=runtime,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            preexec_fn=lambda: os.umask(umask),
+        )
+
     def read_provenance(self, home, utility):
         if utility == "agent-secrets":
             path = home / ".claude" / "hooks" / "agent-secrets" / "provenance.json"
@@ -545,6 +562,26 @@ sys.stdin.read()
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("already", result.stdout)
         self.assertEqual(settings.read_bytes(), after_first_wire)
+
+    def test_fresh_wire_creates_mode_0600_settings_for_each_utility(self):
+        """A fresh default settings path is private even with a permissive umask."""
+        checkout = self.stage_checkout()
+        for utility in ("org-rule-guard", "agent-secrets"):
+            with self.subTest(utility=utility):
+                home = self.temp_dir("fresh-wire-home-%s-" % utility)
+                runtime = self.temp_dir("fresh-wire-runtime-%s-" % utility)
+                settings = home / ".claude" / "settings.json"
+                self.assertFalse(settings.exists())
+                self.assertFalse(settings.parent.exists())
+
+                result = self.run_install_with_umask(
+                    checkout, utility, home, runtime, "--wire", 0o000
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(settings.is_file(), result.stdout)
+                self.assertEqual(stat.S_IMODE(settings.stat().st_mode), 0o600)
+                self.assertFalse(Path(str(settings) + ".bak").exists())
 
     def test_each_wire_preserves_fixture_content_on_every_merge_path(self):
         """Unrelated fixture bytes survive each installer's individual wire paths."""

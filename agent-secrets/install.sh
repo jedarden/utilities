@@ -371,8 +371,7 @@ def write_settings(s, source_mode):
         prefix=temp_prefix, suffix=".tmp", dir=settings_dir
     )
     try:
-        if source_mode is not None:
-            os.fchmod(fd, source_mode)
+        os.fchmod(fd, source_mode if source_mode is not None else 0o600)
         with os.fdopen(fd, "w") as fh:
             fd = None
             json.dump(s, fh, indent=2)

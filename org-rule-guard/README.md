@@ -141,7 +141,9 @@ reaps only its own leftover `.tmp` files while holding the lock. Normal errors
 and HUP/INT/TERM interruptions remove the current temporary file; a hard kill
 can leave one for the next `--wire` run to reap. Rewriting an existing file
 preserves its permission bits,
-including mode `0600`. If the two utility installers run concurrently, the
+including mode `0600`. If the settings file does not exist, `--wire` creates it
+with mode `0600`, regardless of the process umask. If the two utility
+installers run concurrently, the
 second waits and rereads the first result, preserving both hook entries and
 unrelated settings. Manual writers that do not honor the same advisory lock
 must not edit the file during a wire; their races are outside this guarantee.
