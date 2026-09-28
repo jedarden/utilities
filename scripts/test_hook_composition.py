@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ORG_HOOK = ROOT / "org-rule-guard" / "hooks" / "org-rule-guard.py"
 CREDENTIAL_HOOK = ROOT / "agent-secrets" / "hooks" / "credential-guard.py"
 COMBINED_SETTINGS = ROOT / "docs" / "examples" / "settings-both.json"
+STRUCTURE_DOC = ROOT / "docs" / "structure-check.md"
 
 
 def load_hook(path, name):
@@ -28,6 +29,30 @@ def load_hook(path, name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def documented_hook_tools():
+    """Read the code-valued hook tool inventory from the structure guide."""
+    lines = STRUCTURE_DOC.read_text(encoding="utf-8").splitlines()
+    try:
+        section = lines.index("## Hook matcher inventory")
+    except ValueError as error:
+        raise AssertionError(
+            "structure-check reference is missing the hook matcher inventory"
+        ) from error
+
+    try:
+        start = lines.index("```text", section + 1) + 1
+        end = lines.index("```", start)
+    except ValueError as error:
+        raise AssertionError(
+            "structure-check reference is missing the hook tool inventory"
+        ) from error
+
+    tools = [line.strip() for line in lines[start:end] if line.strip()]
+    if any(" " in tool or "`" in tool for tool in tools):
+        raise AssertionError("malformed hook tool inventory")
+    return tools
 
 
 ORG_MODULE = load_hook(ORG_HOOK, "org_rule_guard_for_composition")
@@ -105,6 +130,14 @@ def denied(result):
 
 
 class HookComposition(unittest.TestCase):
+    def test_documented_inventory_equals_hooks_supported_tools(self):
+        expected_tools = set(ORG_MODULE.SUPPORTED_TOOLS) | set(
+            CREDENTIAL_MODULE.SUPPORTED_TOOLS
+        )
+        documented = documented_hook_tools()
+        self.assertEqual(len(documented), len(set(documented)))
+        self.assertEqual(set(documented), expected_tools)
+
     def test_combined_settings_wire_both_independent_handlers(self):
         with COMBINED_SETTINGS.open(encoding="utf-8") as handle:
             settings = json.load(handle)

@@ -3,8 +3,9 @@
 This document is the human-readable companion to
 [`scripts/check-structure.py`](../scripts/check-structure.py). The checker is
 the executable source of truth. The inventories below are intentionally code-
-valued, and `scripts/test_check_structure.py` compares them with the checker;
-update the source, this document, and the relevant fixtures in one change.
+valued, and the documentation-sync tests compare them with their executable
+sources; update the source, this document, and the relevant fixtures in one
+change.
 
 The gate runs as part of `scripts/check-versions.sh` in `utilities-ci`. Run it
 directly from the repository root while developing:
@@ -57,14 +58,23 @@ dependency allowlists.
 
 The shipped `PreToolUse` settings entries for `org-rule-guard` and
 `agent-secrets` must match the installer output and name exactly the complete
-rule-relevant tool inventory handled by each hook: `Write`, `Edit`, `MultiEdit`,
-`NotebookEdit`, and `Bash`. This matcher is a closed coverage boundary, not a
-claim that every write-capable action is intercepted. `NotebookEdit` carries
-notebook cell text in `new_source` and the notebook filename in
-`notebook_path`; omitting it from a matcher bypasses the same file-content and
-credential rules that apply to other write tools. Conversely, adding a tool to
-a matcher without adding it to the hook's `SUPPORTED_TOOLS` inventory would
-invoke a hook that does not inspect that tool.
+rule-relevant tool inventory handled by each hook:
+
+```text
+Write
+Edit
+MultiEdit
+NotebookEdit
+Bash
+```
+
+This matcher is a closed coverage boundary, not a claim that every
+write-capable action is intercepted. `NotebookEdit` carries notebook cell text
+in `new_source` and the notebook filename in `notebook_path`; omitting it from
+a matcher bypasses the same file-content and credential rules that apply to
+other write tools. Conversely, adding a tool to a matcher without adding it to
+the hook's `SUPPORTED_TOOLS` inventory would invoke a hook that does not
+inspect that tool.
 
 MCP tool calls and any other write-capable tool whose name is not in this
 five-tool matcher do not match either `PreToolUse` entry and therefore bypass
@@ -73,11 +83,12 @@ catch-all write hook or post-tool visibility; coverage must be extended
 explicitly when a new write-capable tool is introduced.
 
 `scripts/test_hook_composition.py` loads each hook's `SUPPORTED_TOOLS` inventory
-and asserts that each combined shipped matcher equals its inventory in both
-directions: no supported tool may be missing and no extra matcher name may be
-present. When a hook gains another write-capable tool, update its inventory,
-per-tool payload extraction, installer matcher, settings examples, and this
-reference in one change.
+and asserts that the documented inventory equals their union, while each
+combined shipped matcher equals its hook's inventory in both directions: no
+supported tool may be missing and no extra matcher name may be present. When a
+hook gains another write-capable tool, update its inventory, per-tool payload
+extraction, installer matcher, settings examples, and this reference in one
+change.
 
 ## Hook timeout contract
 
