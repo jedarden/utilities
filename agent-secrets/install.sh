@@ -353,7 +353,11 @@ requested_path, hook, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 path = os.path.realpath(requested_path)
 cmd = f"python3 {hook}"
 matcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
-legacy_matcher = "Write|Edit|MultiEdit|Bash"
+hook_timeout = 10
+legacy_matchers = {
+    matcher,
+    "Write|Edit|MultiEdit|Bash",
+}
 lock_path = path + ".lock"
 settings_dir = os.path.dirname(os.path.abspath(path))
 settings_name = os.path.basename(path)
@@ -510,11 +514,13 @@ try:
 
     current = [
         (entry, handler) for entry, handler in matching
-        if entry.get("matcher") == matcher and "timeout" not in handler
+        if entry.get("matcher") == matcher
+        and handler.get("timeout") == hook_timeout
     ]
     legacy = [
         (entry, handler) for entry, handler in matching
-        if entry.get("matcher") == legacy_matcher and "timeout" not in handler
+        if entry.get("matcher") in legacy_matchers
+        and "timeout" not in handler
     ]
     recognized = current + legacy
     customized = [pair for pair in matching if pair not in recognized]
@@ -527,8 +533,9 @@ try:
         print(f"already    {requested_path}")
     elif legacy and not force:
         snapshot_backup()
-        for entry, _handler in legacy:
+        for entry, handler in legacy:
             entry["matcher"] = matcher
+            handler["timeout"] = hook_timeout
         print(f"refreshed  {requested_path}")
         write_settings(s, source_mode)
     else:
@@ -536,11 +543,12 @@ try:
         if matching:
             for entry, handler in matching:
                 entry["matcher"] = matcher
-                handler.pop("timeout", None)
+                handler["timeout"] = hook_timeout
             print(f"refreshed  {requested_path}")
         else:
             pre.append({"matcher": matcher,
-                        "hooks": [{"type": "command", "command": cmd}]})
+                        "hooks": [{"type": "command", "command": cmd,
+                                   "timeout": hook_timeout}]})
             print(f"wired      {requested_path}")
         write_settings(s, source_mode)
 finally:

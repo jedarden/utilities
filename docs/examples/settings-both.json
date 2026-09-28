@@ -16,7 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/credential-guard.py"
+            "command": "python3 ~/.claude/hooks/credential-guard.py",
+            "timeout": 10
           }
         ]
       }

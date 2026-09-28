@@ -51,6 +51,10 @@ the resulting `PreToolUse` entries, but it is a reference snippet, not a
 replacement for a user's settings file. To merge both guards into an existing
 `settings.json`, run both installers with the same `CLAUDE_SETTINGS` path:
 
+Both guards have the same explicit 10-second hook latency budget. The combined
+example and both installers declare `"timeout": 10` for their command entries;
+this keeps either guard from inheriting the harness default.
+
 ```bash
 SETTINGS="$HOME/.claude/settings.json"
 CLAUDE_SETTINGS="$SETTINGS" \

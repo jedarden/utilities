@@ -785,6 +785,7 @@ time.sleep(60)
         self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.hook_dst())
+        self.assertEqual(entries[0]["hooks"][0]["timeout"], 10)
         self.assertFalse(os.path.exists(self.settings + ".bak"), out)
 
     def test_wire_refreshes_the_previous_shipped_matcher_in_place(self):
@@ -800,6 +801,7 @@ time.sleep(60)
         with open(self.settings) as fh:
             entry = json.load(fh)["hooks"]["PreToolUse"][0]
         self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
+        self.assertEqual(entry["hooks"][0]["timeout"], 10)
         self.assertIn("refreshed", out)
 
     def test_wire_creates_a_private_persistent_lock_file(self):
@@ -898,7 +900,7 @@ time.sleep(60)
         with open(self.settings) as fh:
             entry = json.load(fh)["hooks"]["PreToolUse"][0]
         self.assertEqual(entry["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
-        self.assertNotIn("timeout", entry["hooks"][0])
+        self.assertEqual(entry["hooks"][0]["timeout"], 10)
         self.assertEqual(entry["description"], "operator policy")
         self.assertIn("refreshed", result.stdout.decode())
 

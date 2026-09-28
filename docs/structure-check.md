@@ -68,6 +68,16 @@ When a hook gains another write-capable tool, update its inventory, per-tool
 payload extraction, installer matcher, settings examples, and this reference in
 one change.
 
+## Hook timeout contract
+
+The shipped settings examples and combined composition must give both guards an
+explicit 10-second `PreToolUse` timeout. This is the expected worst-case
+latency budget for `agent-secrets`'s `credential-guard.py` and
+`org-rule-guard`'s `org-rule-guard.py`; neither hook is allowed to inherit the
+harness default. `scripts/check-structure.py` checks these timeout fields in
+the standalone examples, the combined example, and the output produced by
+both installers.
+
 ## Package-manager command inventory
 
 The following regular expressions are searched line-by-line in shell files,

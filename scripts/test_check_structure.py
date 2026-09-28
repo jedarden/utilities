@@ -219,7 +219,7 @@ class StructureCheckerTests(unittest.TestCase):
         )
 
     def write_wiring_fixture(self):
-        self.write_wiring_utility("agent-secrets", "credential-guard.py")
+        self.write_wiring_utility("agent-secrets", "credential-guard.py", timeout=10)
         self.write_wiring_utility("org-rule-guard", "org-rule-guard.py", timeout=10)
         docs = self.fixture / "docs" / "examples"
         docs.mkdir(parents=True)
@@ -240,6 +240,7 @@ class StructureCheckerTests(unittest.TestCase):
                             "hooks": [{
                                 "type": "command",
                                 "command": "python3 ~/.claude/hooks/credential-guard.py",
+                                "timeout": 10,
                             }],
                         },
                     ]
@@ -257,6 +258,23 @@ class StructureCheckerTests(unittest.TestCase):
                         "hooks": [{
                             "type": "command",
                             "command": "python3 ~/.claude/hooks/org-rule-guard.py",
+                            "timeout": 10,
+                        }],
+                    }]
+                }
+            }),
+            encoding="utf-8",
+        )
+        agent_example = self.fixture / "agent-secrets" / "examples" / "settings.json"
+        agent_example.parent.mkdir()
+        agent_example.write_text(
+            json.dumps({
+                "hooks": {
+                    "PreToolUse": [{
+                        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+                        "hooks": [{
+                            "type": "command",
+                            "command": "python3 ~/.claude/hooks/credential-guard.py",
                             "timeout": 10,
                         }],
                     }]
@@ -345,13 +363,13 @@ class StructureCheckerTests(unittest.TestCase):
         self.write_wiring_fixture()
         settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        settings["hooks"]["PreToolUse"][1]["hooks"][0]["timeout"] = 10
+        settings["hooks"]["PreToolUse"][1]["hooks"][0]["timeout"] = 5
         settings_path.write_text(json.dumps(settings), encoding="utf-8")
 
         result = self.run_checker()
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("PreToolUse wiring does not match", result.stderr)
+        self.assertIn("must declare timeout 10", result.stderr)
 
     def test_combined_settings_matcher_drift_fails(self):
         self.write_wiring_fixture()
@@ -387,6 +405,21 @@ class StructureCheckerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             "org-rule-guard/examples/settings.json: settings wiring does not match",
+            result.stderr,
+        )
+
+    def test_shipped_agent_example_timeout_drift_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "agent-secrets" / "examples" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 5
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "credential-guard.py must declare timeout 10",
             result.stderr,
         )
 

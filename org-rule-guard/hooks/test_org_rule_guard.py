@@ -899,6 +899,7 @@ time.sleep(60)
         self.assertEqual(entries[0]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["command"],
                          "python3 %s" % self.dst())
+        self.assertEqual(entries[0]["hooks"][0]["timeout"], 10)
         self.assertFalse(os.path.exists(self.settings + ".bak"), out)
 
     def test_wire_creates_a_private_persistent_lock_file(self):

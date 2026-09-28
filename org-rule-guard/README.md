@@ -83,6 +83,14 @@ denial-log write failure does not change a matching deny: the hook still emits
 the deny JSON and exits 0. The implementation of this protocol is
 [`deny()`](hooks/org-rule-guard.py#L77) and [`main()`](hooks/org-rule-guard.py#L463).
 
+## Hook latency budget
+
+`org-rule-guard.py` has a 10-second worst-case latency budget for one
+`PreToolUse` invocation. Its local rule checks and bounded denial-log write are
+expected to complete within that budget. The shipped settings entry and
+`install.sh --wire` output both declare `"timeout": 10`, making the requirement
+explicit instead of inheriting the Claude Code harness default.
+
 ## Settings wiring
 
 Merge the standalone entry below into the operator's `~/.claude/settings.json`;

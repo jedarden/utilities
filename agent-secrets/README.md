@@ -20,6 +20,14 @@ Background: [*'Ignore .env' is not a defense*](https://jedarden.com/notes/ignore
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
 
+## Hook latency budget
+
+`credential-guard.py` has a 10-second worst-case latency budget for one
+`PreToolUse` invocation. Its local pattern/configuration checks and bounded
+denial-log write are expected to complete within that budget. The shipped
+settings entry and `install.sh --wire` output both declare `"timeout": 10`, so
+the hook never silently inherits the Claude Code harness default.
+
 ## License
 
 The source files in this utility and the hook and wrapper files copied to user
@@ -49,9 +57,10 @@ destination without `--force`. `--wire` is the upgrade mode: it replaces the
 installed hook and `bao-as` with the copies from the selected checkout and
 merges or upgrades the hook entry in `settings.json`. The entry is identified
 by its exact command. The current shipped entry uses matcher
-`Write|Edit|MultiEdit|NotebookEdit|Bash` and has no `timeout` field, so re-running `--wire`
-is a no-op. The previous shipped matcher `Write|Edit|MultiEdit|Bash`, with no
-timeout, is refreshed in place during an upgrade. The pre-`MultiEdit` matcher
+`Write|Edit|MultiEdit|NotebookEdit|Bash` and timeout `10`, so re-running `--wire`
+is a no-op. An entry with the current matcher but no timeout, or the previous
+shipped matcher `Write|Edit|MultiEdit|Bash` with no timeout, is refreshed in
+place during an upgrade. The pre-`MultiEdit` matcher
 `Write|Edit|Bash`, with or without a timeout, is not an in-place refresh
 candidate and is treated as customized.
 
@@ -64,7 +73,7 @@ stdout may still contain the ordinary hook/provenance installation messages;
 the customization report is never sent to stdout. Exit 2 is therefore a
 customization conflict, not a successful warning. `--wire --force` exits 0 and
 replaces the matcher and timeout fields on every matching exact-command entry
-with this release's fields (matcher `Write|Edit|MultiEdit|NotebookEdit|Bash`, no timeout),
+with this release's fields (matcher `Write|Edit|MultiEdit|NotebookEdit|Bash`, timeout `10`),
 while preserving each command, handler type, other fields, and unrelated
 settings. If the command is absent, the entry is appended.
 

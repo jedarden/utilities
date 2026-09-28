@@ -141,7 +141,12 @@ SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z
 COMBINED_SETTINGS = PurePosixPath("docs/examples/settings-both.json")
 WIRED_UTILITIES = ("agent-secrets", "org-rule-guard")
 SHIPPED_SETTINGS_EXAMPLES = {
+    "agent-secrets": PurePosixPath("examples/settings.json"),
     "org-rule-guard": PurePosixPath("examples/settings.json"),
+}
+SHIPPED_HOOK_TIMEOUTS = {
+    "python3 ~/.claude/hooks/credential-guard.py": 10,
+    "python3 ~/.claude/hooks/org-rule-guard.py": 10,
 }
 PYTHON_MIN_FEATURE_VERSION = 9
 
@@ -727,6 +732,30 @@ def _sort_settings_entries(entries: list[object]) -> list[object]:
     return sorted(entries, key=lambda entry: json.dumps(entry, sort_keys=True))
 
 
+def _settings_timeout_errors(entries: list[object], path: Path) -> list[str]:
+    """Require an explicit timeout for every shipped guard entry."""
+
+    errors = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        hooks = entry.get("hooks")
+        if not isinstance(hooks, list):
+            continue
+        for hook in hooks:
+            if not isinstance(hook, dict):
+                continue
+            command = hook.get("command")
+            if command not in SHIPPED_HOOK_TIMEOUTS:
+                continue
+            expected = SHIPPED_HOOK_TIMEOUTS[command]
+            if hook.get("timeout") != expected:
+                errors.append(
+                    f"{path}: {command} must declare timeout {expected}"
+                )
+    return errors
+
+
 def _settings_environment(home: Path, generated_path: Path) -> dict[str, str]:
     """Build the isolated environment used to exercise an installer."""
 
@@ -795,10 +824,11 @@ def shipped_settings_wiring_errors(root: Path) -> list[str]:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             errors.append(f"{settings_path}: invalid JSON ({error})")
             continue
-        _, shape_errors = _settings_pretooluse(example, settings_path)
+        example_entries, shape_errors = _settings_pretooluse(example, settings_path)
         if shape_errors:
             errors.extend(shape_errors)
             continue
+        errors.extend(_settings_timeout_errors(example_entries, settings_path))
 
         with tempfile.TemporaryDirectory(prefix="check-settings-") as directory:
             temp_root = Path(directory)
@@ -825,6 +855,11 @@ def shipped_settings_wiring_errors(root: Path) -> list[str]:
                 continue
             generated["hooks"]["PreToolUse"] = _normalise_generated_commands(
                 generated_entries, home
+            )
+            errors.extend(
+                _settings_timeout_errors(
+                    generated["hooks"]["PreToolUse"], settings_path
+                )
             )
             if generated != example:
                 errors.append(
@@ -858,6 +893,9 @@ def combined_settings_wiring_errors(root: Path) -> list[str]:
     expected, errors = _settings_pretooluse(example, settings_path)
     if errors:
         return errors
+    errors.extend(_settings_timeout_errors(expected, settings_path))
+    if errors:
+        return errors
     if not all((root / utility).is_dir() for utility in WIRED_UTILITIES):
         return []
 
@@ -880,6 +918,9 @@ def combined_settings_wiring_errors(root: Path) -> list[str]:
         if errors:
             return errors
         actual = _normalise_generated_commands(actual, home)
+        errors = _settings_timeout_errors(actual, settings_path)
+        if errors:
+            return errors
         if _sort_settings_entries(actual) != _sort_settings_entries(expected):
             return [
                 f"{settings_path}: PreToolUse wiring does not match the entries "
