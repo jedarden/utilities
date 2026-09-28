@@ -83,36 +83,34 @@ and is covered by the documented `upgrade`/`install` forms where applicable.
 For an absolute import, the checker takes the root before the first dot. The
 root is allowed when it is in `STDLIB_MODULES` or in the set of Python module
 names found inside the same utility. Relative imports are not rejected by this
-check. The standard-library portion is the union of these three source sets,
+check. The standard-library portion is the union of these two source sets,
 listed in `STDLIB_ALLOWLIST_SOURCES` (each source name is paired with the set
 it contributes):
 
 | Allowlist source | Effective entries |
 |---|---|
-| `sys.stdlib_module_names` | Every root reported by the Python interpreter's standard-library module inventory; empty on interpreters without that attribute |
-| `sys.builtin_module_names` | Every root built into the Python interpreter |
+| `PYTHON39_STDLIB_MODULES` | The fixed Python 3.9 standard-library root inventory in the checker |
 | `__future__` | The pseudo-module `__future__` |
 
 In executable terms, the set is:
 
 ```python
-set(getattr(sys, "stdlib_module_names", ()))
-| set(sys.builtin_module_names)
+PYTHON39_STDLIB_MODULES
 | {"__future__"}
 ```
 
-This is runtime-derived because the standard library is platform- and
-Python-version-dependent. To inspect the exact effective roots for the
-interpreter that will run CI:
+The pinned inventory includes platform-specific standard-library modules and
+does not grow when CI runs the checker with a newer interpreter. In particular,
+modules added after Python 3.9, such as `tomllib`, remain rejected as absolute
+imports. To inspect the exact effective roots:
 
 ```bash
-python3 -c 'import sys; print("\n".join(sorted(set(getattr(sys, "stdlib_module_names", ())) | set(sys.builtin_module_names) | {"__future__"})))'
+python3 -c 'import runpy; policy = runpy.run_path("scripts/check-structure.py"); print("\n".join(sorted(policy["STDLIB_MODULES"])))'
 ```
 
 An import from a third-party package is not made valid by adding its name to
-the documentation. If the checker needs a compatibility fallback for a
-Python version that lacks `sys.stdlib_module_names`, change the executable
-set expression and its tests together with this section.
+the documentation. When changing the Python floor, update the pinned
+inventory, its tests, and this section together.
 
 ## Sibling-reference inventory
 
@@ -160,7 +158,7 @@ the contents of the offending line.
 Make policy changes as one reviewable change:
 
 1. Add or change the executable entry in `PACKAGE_INSTALL_PATTERNS`,
-   `STDLIB_MODULES`/its documented source expression, or
+   `PYTHON39_STDLIB_MODULES`/its documented source expression, or
    `SIBLING_REFERENCE_RULES` (and `SIBLING_NORMALIZED_IMPORT_RULE` when the
    normalized-import behavior changes).
 2. Add a focused positive fixture and a nearby non-match or allowed-path

@@ -360,6 +360,22 @@ class StructureCheckerTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_post_python39_stdlib_import_fails(self):
+        self.assertNotIn("tomllib", checker.STDLIB_MODULES)
+        utility = self.write_utility("alpha")
+        runtime_file = utility / "hooks" / "hook.py"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text("import tomllib\n", encoding="utf-8")
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            f"{runtime_file}:1: non-stdlib Python import 'tomllib'",
+            result.stderr,
+        )
+
     def test_python_310_match_syntax_fails(self):
         utility = self.write_utility("alpha")
         runtime_file = utility / "hooks" / "hook.py"
