@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import importlib.util
 import json
 import os
 import stat
@@ -30,6 +29,13 @@ class ReceiptTests(unittest.TestCase):
     def run_hook(self, payload):
         return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload),
                               text=True, capture_output=True, env=self.env, timeout=20)
+
+    def run_hook_raw(self, raw):
+        return subprocess.run([sys.executable, str(HOOK)], input=raw,
+                              text=True, capture_output=True, env=self.env, timeout=20)
+
+    def receipt_text(self, session_id):
+        return (self.receipts / (session_id + ".json")).read_text()
 
     def test_round_trip_records_rules_denials_and_unresolved_errors(self):
         self.transcript.write_text("\n".join([
@@ -76,6 +82,133 @@ class ReceiptTests(unittest.TestCase):
         empty = subprocess.run([sys.executable, str(HOOK)], input="not json", text=True,
                                 capture_output=True, env=self.env, timeout=20)
         self.assertEqual(empty.returncode, 0)
+
+    def test_malformed_or_missing_session_end_input_is_fail_open(self):
+        for raw in ("", "not json", "null", "[]", '{"session_id":'):
+            with self.subTest(raw=raw):
+                result = self.run_hook_raw(raw)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, "")
+        self.assertFalse(self.receipts.exists())
+
+        missing_transcript = self.run_hook({
+            "session_id": "missing-transcript",
+            "transcript_path": str(self.root / "does-not-exist.jsonl"),
+        })
+        self.assertEqual(missing_transcript.returncode, 0)
+        self.assertEqual(missing_transcript.stdout, "")
+        self.assertEqual(missing_transcript.stderr, "")
+        receipt = json.loads(self.receipt_text("missing-transcript"))
+        self.assertEqual(receipt["rules_consulted"], [])
+        self.assertEqual(receipt["unresolved_errors"], [])
+
+    def test_receipt_bounds_text_and_collection_sizes(self):
+        session_id = "bounded-session"
+        content = []
+        for index in range(100):
+            content.append({
+                "type": "tool_use",
+                "id": "read-" + str(index),
+                "name": "Read",
+                "input": {
+                    "file_path": "/repo/.claude/skills/skill-" + str(index) + "/README.md",
+                },
+            })
+            content.extend([
+                {
+                    "type": "tool_use",
+                    "id": "bash-" + str(index),
+                    "name": "Bash",
+                    "input": {"command": "command-" + str(index)},
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "bash-" + str(index),
+                    "is_error": True,
+                    "content": "error-" + str(index) + "-" + ("x" * 500),
+                },
+            ])
+        self.transcript.write_text(json.dumps({
+            "type": "assistant", "message": {"content": content},
+        }) + "\n")
+
+        denial_dir = self.state / "org-rule-guard"
+        denial_dir.mkdir(parents=True)
+        with (denial_dir / "denials.jsonl").open("w") as handle:
+            for index in range(200):
+                handle.write(json.dumps({
+                    "ts": "t" * 200,
+                    "rule_id": "rule-" + ("r" * 400) + str(index),
+                    "tool": "tool-" + ("t" * 400) + str(index),
+                    "session_id": session_id,
+                }) + "\n")
+
+        result = self.run_hook({
+            "session_id": session_id,
+            "cwd": "/repo/" + ("c" * 500),
+            "reason": "r" * 500,
+            "transcript_path": str(self.transcript),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(self.receipt_text(session_id))
+        self.assertLessEqual(len(receipt["session_id"]), 128)
+        self.assertLessEqual(len(receipt["reason"]), 128)
+        self.assertLessEqual(len(receipt["cwd"]), 160)
+        self.assertEqual(len(receipt["rules_consulted"]), 64)
+        self.assertEqual(len(receipt["unresolved_errors"]), 64)
+        self.assertEqual(len(receipt["denials"]), 128)
+        for denial in receipt["denials"]:
+            self.assertEqual(len(denial["ts"]), 32)
+            self.assertEqual(len(denial["rule_id"]), 128)
+            self.assertEqual(len(denial["tool"]), 128)
+        for error in receipt["unresolved_errors"]:
+            self.assertEqual(len(error["signature"]), 240)
+
+    def test_receipt_redacts_credential_like_content(self):
+        credential_values = [
+            "ghp_" + ("A" * 40),
+            "github_pat_" + ("B" * 45),
+            "AKIA" + "0123456789ABCDEF",
+            "xoxb-" + ("C" * 24),
+            "sk-ant-" + ("D" * 35),
+            "Bearer " + ("E" * 24),
+            "-----BEGIN PRIVATE KEY-----\\n" + ("F" * 40)
+            + "\\n-----END PRIVATE KEY-----",
+        ]
+        marker = "transcript-payload-must-not-be-copied"
+        secret_blob = " ".join(credential_values)
+        self.transcript.write_text(json.dumps({
+            "type": "assistant", "message": {"content": [{
+                "type": "tool_use", "id": "secret-bash", "name": "Bash",
+                "input": {"command": secret_blob},
+            }]},
+        }) + "\n")
+        with self.transcript.open("a") as handle:
+            handle.write(json.dumps({
+                "type": "user", "message": {"content": [{
+                    "type": "tool_result", "tool_use_id": "secret-bash",
+                    "is_error": True, "content": secret_blob,
+                }]},
+            }) + "\n")
+            handle.write(json.dumps({
+                "type": "user", "message": {"content": [{
+                    "type": "text", "text": marker + " " + secret_blob,
+                }]},
+            }) + "\n")
+
+        session_id = "receipt-redaction"
+        result = self.run_hook({
+            "session_id": session_id,
+            "cwd": "/repo/" + credential_values[0],
+            "reason": credential_values[1],
+            "transcript_path": str(self.transcript),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        emitted = self.receipt_text(session_id)
+        for credential in credential_values:
+            self.assertNotIn(credential, emitted)
+        self.assertNotIn(marker, emitted)
 
     def test_installer_wires_one_session_end_command_and_is_idempotent(self):
         hooks = self.root / "hooks"

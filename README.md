@@ -221,6 +221,7 @@ in the directory is included automatically:
 python3 -m unittest discover -s agent-secrets/hooks -v
 python3 -m unittest discover -s agent-secrets/bin -v
 python3 -m unittest discover -s agent-secrets/policies -v
+python3 -m unittest discover -s friction-receipt/hooks -v
 python3 -m unittest discover -s org-rule-guard/hooks -v
 python3 -m unittest discover -s scripts -v
 ```
