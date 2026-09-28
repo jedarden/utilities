@@ -17,6 +17,12 @@ python3 scripts/check-structure.py
 
 Each direct child of the repository is a utility unless its name starts with
 `.` or it is one of the repository-tooling directories `docs` and `scripts`.
+The repository root must own these files:
+
+| Inventory | Entries |
+|---|---|
+| Required repository files | `LICENSE` |
+
 Each utility must own these files:
 
 | Inventory | Entries |

@@ -290,4 +290,8 @@ not a runtime dependency.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+The utilities, repository tooling, and documentation in this repository are
+licensed under the MIT License. Installers copy selected utility files to user
+hosts; those installed copies remain under the MIT License. The installers do
+not copy this root license file alongside them, so retain [LICENSE](LICENSE)
+when redistributing installed files.

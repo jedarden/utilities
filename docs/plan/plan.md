@@ -3,7 +3,8 @@
 ## Overview
 
 Small, self-contained tools for running coding agents safely. One folder per
-tool; nothing shared between folders except the license and this plan.
+tool; nothing shared between folders except the root MIT License and this
+plan.
 
 ## Architecture
 

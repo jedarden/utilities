@@ -4,6 +4,11 @@ This note records the repository-level decisions that shape the utilities
 layout. The longer implementation plan is in [`docs/plan/plan.md`](../plan/plan.md);
 this is the short rationale to consult when adding or extracting a utility.
 
+The repository and the files its installers copy to user hosts are covered by
+the MIT License in the root [`LICENSE`](../../LICENSE). Each utility README
+also states this coverage because an installed copy does not carry a separate
+license file.
+
 ## Utilities are runtime leaves
 
 Each top-level utility owns its runtime files and can be installed without

@@ -20,6 +20,14 @@ Background: [*'Ignore .env' is not a defense*](https://jedarden.com/notes/ignore
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
 
+## License
+
+The source files in this utility and the hook and wrapper files copied to user
+hosts by `install.sh` are licensed under the MIT License. Installation does
+not change that coverage. The installer does not copy a separate license file;
+retain the repository's [LICENSE](../LICENSE) text when redistributing an
+installed copy.
+
 ## Install
 
 For a reproducible install, select the utility's release tag before running

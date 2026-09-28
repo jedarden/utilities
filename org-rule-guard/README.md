@@ -13,6 +13,14 @@ check in [`hooks/org-rule-guard.py`](hooks/org-rule-guard.py).
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
 
+## License
+
+The source files in this utility, including the credential guard copied by
+the install-time bundle, and the files `install.sh` places on user hosts are
+licensed under the MIT License. Installation does not change that coverage.
+The installer does not copy a separate license file; retain the repository's
+[LICENSE](../LICENSE) text when redistributing an installed copy.
+
 ## Relationship with agent-secrets
 
 `org-rule-guard` is a runtime leaf. Its `credential-value` rule is bundled and

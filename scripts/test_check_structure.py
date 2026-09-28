@@ -109,6 +109,15 @@ class DocumentationSync(unittest.TestCase):
         )
         self.assertEqual(tuple(re.findall(r"`([^`]+)`", row)), checker.REQUIRED_FILES)
 
+    def test_documented_required_root_files_match_checker(self):
+        lines = STRUCTURE_DOC.read_text(encoding="utf-8").splitlines()
+        row = next(
+            line for line in lines if line.startswith("| Required repository files |")
+        )
+        self.assertEqual(
+            tuple(re.findall(r"`([^`]+)`", row)), checker.REQUIRED_ROOT_FILES
+        )
+
     def test_documented_sibling_rules_match_checker(self):
         expected = list(checker.SIBLING_REFERENCE_RULES)
         expected.append(checker.SIBLING_NORMALIZED_IMPORT_RULE)
@@ -128,6 +137,9 @@ class StructureCheckerTests(unittest.TestCase):
         scripts = self.fixture / "scripts"
         scripts.mkdir()
         shutil.copy2(CHECKER, scripts / "check-structure.py")
+        (self.fixture / "LICENSE").write_text(
+            "MIT License\n", encoding="utf-8"
+        )
 
     def write_utility(self, name):
         utility = self.fixture / name
@@ -257,6 +269,35 @@ class StructureCheckerTests(unittest.TestCase):
         self.assertIn(
             "1 utilities have README.md, VERSION, CHANGELOG.md, install.sh",
             result.stdout,
+        )
+
+    def test_missing_required_root_file_fails_with_file_named(self):
+        self.write_utility("alpha")
+        (self.fixture / "LICENSE").unlink()
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "LICENSE: required root file is missing",
+            result.stderr,
+        )
+
+    def test_symlinked_required_root_file_fails(self):
+        self.write_utility("alpha")
+        target = self.fixture / "LICENSE-copy"
+        target.write_text("MIT License\n", encoding="utf-8")
+        (self.fixture / "LICENSE").unlink()
+        (self.fixture / "LICENSE").symlink_to(target)
+        self.write_readme()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "LICENSE: required root file must be owned, not a symlink",
+            result.stderr,
         )
 
     def test_combined_settings_wiring_matches_both_installers(self):

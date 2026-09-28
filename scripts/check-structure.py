@@ -24,6 +24,7 @@ from pathlib import PurePosixPath
 
 
 REQUIRED_FILES = ("README.md", "VERSION", "CHANGELOG.md", "install.sh")
+REQUIRED_ROOT_FILES = ("LICENSE",)
 BUNDLE_MANIFEST = "bundled-dependencies.json"
 REPOSITORY_DIRECTORIES = {"docs", "scripts"}
 TEXT_SUFFIXES = {
@@ -174,6 +175,19 @@ def required_file_errors(utility: Path) -> list[str]:
             errors.append(f"{path}: required file must be owned, not a symlink")
         elif not path.is_file():
             errors.append(f"{path}: required file is missing")
+    return errors
+
+
+def required_root_file_errors(root: Path) -> list[str]:
+    """Require repository-level files referenced by the layout contract."""
+
+    errors = []
+    for name in REQUIRED_ROOT_FILES:
+        path = root / name
+        if path.is_symlink():
+            errors.append(f"{path}: required root file must be owned, not a symlink")
+        elif not path.is_file():
+            errors.append(f"{path}: required root file is missing")
     return errors
 
 
@@ -861,6 +875,7 @@ def main() -> int:
     )
     errors = []
     bundle_declarations = {}
+    errors.extend(required_root_file_errors(root))
 
     for utility in candidates:
         if utility.is_symlink():
@@ -903,7 +918,7 @@ def main() -> int:
     print(
         "check-structure: "
         f"{len(candidates)} utilities have README.md, VERSION, CHANGELOG.md, "
-        "install.sh "
+        "install.sh; repository root has LICENSE; "
         "and pass the POSIX-shell, Python-3.9, Python-stdlib, package-install, and "
         "cross-utility checks; README Folder table, shipped hook settings "
         "examples, and combined hook settings agree"
