@@ -60,6 +60,14 @@ Rules 2–3 match real manifest lines only, never comments, so a document that
 Claude Code invokes the hook for `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and
 `Bash` through the
 `PreToolUse` matcher shown in the [settings example](examples/settings.json).
+That five-tool matcher is the hook's complete, closed coverage boundary: it is
+not a catch-all for every write-capable action. An MCP tool call, or any other
+write-capable tool whose name is not listed, does not match this entry and
+bypasses this guard silently. When both utilities are installed, the same
+unmatched call also bypasses `agent-secrets`; a credential written through it
+is not inspected by either guard. The guards have no post-tool visibility, so
+adding a new write-capable tool requires extending the hook inventory, payload
+handling, installer matcher, settings examples, and documentation together.
 The hook reads one JSON payload from stdin and handles one tool call per
 process. The first matching rule denies the call and writes one JSON object to
 stdout with this shape:

@@ -28,6 +28,19 @@ denial-log write are expected to complete within that budget. The shipped
 settings entry and `install.sh --wire` output both declare `"timeout": 10`, so
 the hook never silently inherits the Claude Code harness default.
 
+## Hook coverage boundary
+
+The shipped `PreToolUse` matcher and `SUPPORTED_TOOLS` inventory cover exactly
+`Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and `Bash`. This is a closed
+boundary, not coverage of every write-capable action. An MCP tool call, or any
+other write-capable tool whose name is not in that matcher, does not invoke
+this guard and bypasses its credential scan silently. When paired with
+`org-rule-guard`, the same unmatched call bypasses both guards; a credential
+written through it is not inspected by either one. Neither guard can observe
+tool output or recover after an unmatched write, so adding a new write-capable
+tool requires updating the hook inventory, payload handling, installer
+matcher, settings examples, and documentation together.
+
 ## License
 
 The source files in this utility and the hook and wrapper files copied to user

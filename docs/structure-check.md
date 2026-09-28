@@ -56,17 +56,28 @@ dependency allowlists.
 ## Hook matcher inventory
 
 The shipped `PreToolUse` settings entries for `org-rule-guard` and
-`agent-secrets` must match the installer output and cover every rule-relevant
-tool handled by the hooks: `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and
-`Bash`. `NotebookEdit` carries notebook cell text in `new_source` and the
-notebook filename in `notebook_path`; omitting it from a matcher bypasses the
-same file-content and credential rules that apply to other write tools.
+`agent-secrets` must match the installer output and name exactly the complete
+rule-relevant tool inventory handled by each hook: `Write`, `Edit`, `MultiEdit`,
+`NotebookEdit`, and `Bash`. This matcher is a closed coverage boundary, not a
+claim that every write-capable action is intercepted. `NotebookEdit` carries
+notebook cell text in `new_source` and the notebook filename in
+`notebook_path`; omitting it from a matcher bypasses the same file-content and
+credential rules that apply to other write tools. Conversely, adding a tool to
+a matcher without adding it to the hook's `SUPPORTED_TOOLS` inventory would
+invoke a hook that does not inspect that tool.
+
+MCP tool calls and any other write-capable tool whose name is not in this
+five-tool matcher do not match either `PreToolUse` entry and therefore bypass
+both guards silently, including credential writes. Neither guard has a
+catch-all write hook or post-tool visibility; coverage must be extended
+explicitly when a new write-capable tool is introduced.
 
 `scripts/test_hook_composition.py` loads each hook's `SUPPORTED_TOOLS` inventory
-and asserts that every listed tool is matched by the combined shipped settings.
-When a hook gains another write-capable tool, update its inventory, per-tool
-payload extraction, installer matcher, settings examples, and this reference in
-one change.
+and asserts that each combined shipped matcher equals its inventory in both
+directions: no supported tool may be missing and no extra matcher name may be
+present. When a hook gains another write-capable tool, update its inventory,
+per-tool payload extraction, installer matcher, settings examples, and this
+reference in one change.
 
 ## Hook timeout contract
 

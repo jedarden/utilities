@@ -10,7 +10,6 @@ credential coverage.
 import json
 import importlib.util
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -122,7 +121,7 @@ class HookComposition(unittest.TestCase):
         self.assertEqual(entries[0]["hooks"][0]["timeout"], 10)
         self.assertEqual(entries[1]["hooks"][0]["timeout"], 10)
 
-    def test_shipped_matchers_cover_every_tool_class_the_hooks_inspect(self):
+    def test_shipped_matchers_equal_each_hooks_supported_tools(self):
         with COMBINED_SETTINGS.open(encoding="utf-8") as handle:
             entries = json.load(handle)["hooks"]["PreToolUse"]
 
@@ -138,12 +137,14 @@ class HookComposition(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(command, inspected_tools)
                 self.assertEqual(inspected_tools[command], expected_tools)
-                missing = {
-                    tool for tool in inspected_tools[command]
-                    if re.fullmatch(entry["matcher"], tool) is None
-                }
+                matcher_tools = entry["matcher"].split("|")
+                self.assertEqual(len(matcher_tools), len(set(matcher_tools)))
+                missing = inspected_tools[command] - set(matcher_tools)
                 self.assertEqual(missing, set(),
                                  "matcher omits inspected tool classes")
+                extra = set(matcher_tools) - inspected_tools[command]
+                self.assertEqual(extra, set(),
+                                 "matcher names an uninspected tool class")
 
     def test_notebook_edit_credential_is_denied_by_both_hooks(self):
         payload = notebook_edit_payload("stored value: " + token(seed=17))
