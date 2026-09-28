@@ -188,11 +188,16 @@ class StructureCheckerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def write_wiring_utility(self, name, hook_name, timeout=None):
+    def write_wiring_utility(
+        self, name, hook_name, timeout=None, event="PreToolUse", matcher=None
+    ):
         utility = self.write_utility(name)
         timeout_field = ""
         if timeout is not None:
             timeout_field = f', "timeout": {timeout}'
+        matcher_field = ""
+        if matcher is not None:
+            matcher_field = f'    "matcher": "{matcher}",\n'
         (utility / "install.sh").write_text(
             "#!/bin/sh\n"
             "set -eu\n"
@@ -205,10 +210,11 @@ class StructureCheckerTests(unittest.TestCase):
             "if os.path.exists(path):\n"
             "    with open(path) as handle:\n"
             "        settings = json.load(handle)\n"
-            "settings.setdefault(\"hooks\", {}).setdefault(\"PreToolUse\", []).append({\n"
-            "    \"matcher\": \"Write|Edit|MultiEdit|NotebookEdit|Bash\",\n"
+            "entry = {\n"
+            f"{matcher_field}"
             f'    "hooks": [{{"type": "command", "command": "python3 " + hook{timeout_field}}}]\n'
-            "})\n"
+            "}\n"
+            f'settings.setdefault("hooks", {{}}).setdefault("{event}", []).append(entry)\n'
             "with open(path, \"w\") as handle:\n"
             "    json.dump(settings, handle)\n"
             "PY\n",
@@ -219,8 +225,17 @@ class StructureCheckerTests(unittest.TestCase):
         )
 
     def write_wiring_fixture(self):
-        self.write_wiring_utility("agent-secrets", "credential-guard.py", timeout=10)
-        self.write_wiring_utility("org-rule-guard", "org-rule-guard.py", timeout=10)
+        matcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
+        self.write_wiring_utility(
+            "agent-secrets", "credential-guard.py", timeout=10, matcher=matcher
+        )
+        self.write_wiring_utility(
+            "org-rule-guard", "org-rule-guard.py", timeout=10, matcher=matcher
+        )
+        self.write_wiring_utility(
+            "friction-receipt", "friction-receipt.py", timeout=10,
+            event="SessionEnd",
+        )
         docs = self.fixture / "docs" / "examples"
         docs.mkdir(parents=True)
         (docs / "settings-both.json").write_text(
@@ -279,6 +294,22 @@ class StructureCheckerTests(unittest.TestCase):
                         }],
                     }]
                 }
+            }),
+            encoding="utf-8",
+        )
+        friction_example = self.fixture / "friction-receipt" / "examples" / "settings.json"
+        friction_example.parent.mkdir()
+        friction_example.write_text(
+            json.dumps({
+                "hooks": {
+                    "SessionEnd": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": "python3 ~/.claude/hooks/friction-receipt.py",
+                            "timeout": 10,
+                        }],
+                    }],
+                },
             }),
             encoding="utf-8",
         )
@@ -422,6 +453,46 @@ class StructureCheckerTests(unittest.TestCase):
             "credential-guard.py must declare timeout 10",
             result.stderr,
         )
+
+    def test_shipped_friction_example_timeout_drift_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "friction-receipt" / "examples" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] = 5
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "friction-receipt.py must declare timeout 10",
+            result.stderr,
+        )
+
+    def test_missing_shipped_friction_example_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "friction-receipt" / "examples" / "settings.json"
+        settings_path.unlink()
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "friction-receipt/examples/settings.json: settings example is missing",
+            result.stderr,
+        )
+
+    def test_shipped_friction_example_event_drift_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "friction-receipt" / "examples" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["hooks"]["PreToolUse"] = settings["hooks"].pop("SessionEnd")
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must contain a 'SessionEnd' list", result.stderr)
 
     def test_non_posix_shell_shebang_fails(self):
         utility = self.write_utility("alpha")

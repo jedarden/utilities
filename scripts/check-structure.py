@@ -141,12 +141,14 @@ SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z
 COMBINED_SETTINGS = PurePosixPath("docs/examples/settings-both.json")
 WIRED_UTILITIES = ("agent-secrets", "org-rule-guard")
 SHIPPED_SETTINGS_EXAMPLES = {
-    "agent-secrets": PurePosixPath("examples/settings.json"),
-    "org-rule-guard": PurePosixPath("examples/settings.json"),
+    "agent-secrets": (PurePosixPath("examples/settings.json"), "PreToolUse"),
+    "org-rule-guard": (PurePosixPath("examples/settings.json"), "PreToolUse"),
+    "friction-receipt": (PurePosixPath("examples/settings.json"), "SessionEnd"),
 }
 SHIPPED_HOOK_TIMEOUTS = {
     "python3 ~/.claude/hooks/credential-guard.py": 10,
     "python3 ~/.claude/hooks/org-rule-guard.py": 10,
+    "python3 ~/.claude/hooks/friction-receipt.py": 10,
 }
 PYTHON_MIN_FEATURE_VERSION = 9
 
@@ -692,18 +694,28 @@ def readme_table_errors(root: Path, utilities: list[Path]) -> list[str]:
     return errors
 
 
-def _settings_pretooluse(settings: object, path: Path) -> tuple[list[object] | None, list[str]]:
-    """Return a settings file's PreToolUse entries with shape diagnostics."""
+def _settings_event_entries(
+    settings: object, event: str, path: Path
+) -> tuple[list[object] | None, list[str]]:
+    """Return a settings file's event entries with shape diagnostics."""
 
     if not isinstance(settings, dict):
         return None, [f"{path}: settings example must contain a JSON object"]
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
         return None, [f"{path}: settings example must contain a 'hooks' object"]
-    entries = hooks.get("PreToolUse")
+    entries = hooks.get(event)
     if not isinstance(entries, list):
-        return None, [f"{path}: settings example must contain a 'PreToolUse' list"]
+        return None, [f"{path}: settings example must contain a '{event}' list"]
     return entries, []
+
+
+def _settings_pretooluse(
+    settings: object, path: Path
+) -> tuple[list[object] | None, list[str]]:
+    """Return a settings file's PreToolUse entries with shape diagnostics."""
+
+    return _settings_event_entries(settings, "PreToolUse", path)
 
 
 def _normalise_generated_commands(entries: list[object], home: Path) -> list[object]:
@@ -727,7 +739,7 @@ def _normalise_generated_commands(entries: list[object], home: Path) -> list[obj
 
 
 def _sort_settings_entries(entries: list[object]) -> list[object]:
-    """Make independent PreToolUse entries comparable regardless of order."""
+    """Make independent event entries comparable regardless of order."""
 
     return sorted(entries, key=lambda entry: json.dumps(entry, sort_keys=True))
 
@@ -810,7 +822,7 @@ def shipped_settings_wiring_errors(root: Path) -> list[str]:
     """
 
     errors = []
-    for utility, relative_path in SHIPPED_SETTINGS_EXAMPLES.items():
+    for utility, (relative_path, event) in SHIPPED_SETTINGS_EXAMPLES.items():
         utility_root = root / utility
         settings_path = utility_root / Path(*relative_path.parts)
         if not settings_path.is_file():
@@ -824,7 +836,9 @@ def shipped_settings_wiring_errors(root: Path) -> list[str]:
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             errors.append(f"{settings_path}: invalid JSON ({error})")
             continue
-        example_entries, shape_errors = _settings_pretooluse(example, settings_path)
+        example_entries, shape_errors = _settings_event_entries(
+            example, event, settings_path
+        )
         if shape_errors:
             errors.extend(shape_errors)
             continue
@@ -847,18 +861,18 @@ def shipped_settings_wiring_errors(root: Path) -> list[str]:
                     f"{generated_path}: installer generated invalid JSON ({error})"
                 )
                 continue
-            generated_entries, shape_errors = _settings_pretooluse(
-                generated, generated_path
+            generated_entries, shape_errors = _settings_event_entries(
+                generated, event, generated_path
             )
             if shape_errors:
                 errors.extend(shape_errors)
                 continue
-            generated["hooks"]["PreToolUse"] = _normalise_generated_commands(
+            generated["hooks"][event] = _normalise_generated_commands(
                 generated_entries, home
             )
             errors.extend(
                 _settings_timeout_errors(
-                    generated["hooks"]["PreToolUse"], settings_path
+                    generated["hooks"][event], settings_path
                 )
             )
             if generated != example:

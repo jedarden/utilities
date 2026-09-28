@@ -50,9 +50,12 @@ destination in `bundled-dependencies.json`; `install.sh` must copy that exact
 source into the installing utility's own layout. The installed copy is then a
 runtime leaf. A bundle never permits a runtime reference to the sibling.
 
-The gate also verifies the shipped hook settings examples against the output
-of their installers. Those checks are contract checks rather than additional
-dependency allowlists.
+The gate verifies every utility-owned hook settings example against the output
+of that utility's installer. The event name is part of the contract: the two
+guard examples are `PreToolUse`, while friction-receipt's example is
+`SessionEnd`. Those checks are contract checks rather than additional
+dependency allowlists, and they catch missing examples, invalid JSON, event or
+matcher drift, and installer output drift.
 
 ## Hook matcher inventory
 
@@ -82,6 +85,15 @@ both guards silently, including credential writes. Neither guard has a
 catch-all write hook or post-tool visibility; coverage must be extended
 explicitly when a new write-capable tool is introduced.
 
+`SessionEnd` is an event-scoped hook, not a tool-scoped hook. The
+friction-receipt entry therefore has no `matcher` and contributes no name to
+the `SUPPORTED_TOOLS` inventory. It is nevertheless part of the shipped
+settings contract: the structure gate runs `friction-receipt/install.sh
+--wire` and compares its `hooks.SessionEnd` output with
+`friction-receipt/examples/settings.json`. A new event-scoped hook follows the
+same settings-example verification path without being added to the tool
+matcher inventory.
+
 `scripts/test_hook_composition.py` loads each hook's `SUPPORTED_TOOLS` inventory
 and asserts that the documented inventory equals their union, while each
 combined shipped matcher equals its hook's inventory in both directions: no
@@ -92,13 +104,13 @@ change.
 
 ## Hook timeout contract
 
-The shipped settings examples and combined composition must give both guards an
-explicit 10-second `PreToolUse` timeout. This is the expected worst-case
-latency budget for `agent-secrets`'s `credential-guard.py` and
-`org-rule-guard`'s `org-rule-guard.py`; neither hook is allowed to inherit the
-harness default. `scripts/check-structure.py` checks these timeout fields in
-the standalone examples, the combined example, and the output produced by
-both installers.
+The shipped settings examples and combined composition must give every shipped
+hook an explicit 10-second timeout. This is the expected worst-case latency
+budget for `agent-secrets`'s `credential-guard.py`, `org-rule-guard`'s
+`org-rule-guard.py`, and friction-receipt's `friction-receipt.py`; no hook is
+allowed to inherit the harness default. `scripts/check-structure.py` checks
+these timeout fields in the standalone examples, the combined `PreToolUse`
+example, and the output produced by all three installers.
 
 ## Package-manager command inventory
 
