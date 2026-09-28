@@ -177,13 +177,17 @@ plan.
   signatures, and an `ended_mid_task` flag. Credential-shaped values are
   redacted before all fields are bounded; raw transcript records are never
   copied. The directory is mode 0700 and records are mode 0600.
-- `hooks/test_friction_receipt.py` — fixture-driven round-trip coverage for
-  rule reads, denials, unresolved errors, mid-task sessions, malformed input,
-  permissions, and redaction.
+- `hooks/test_friction_receipt.py` — fixture-driven round-trip and installer
+  contract coverage for rule reads, denials, unresolved errors, mid-task
+  sessions, malformed input, permissions, redaction, idempotent wiring,
+  legacy refresh, customization preservation, ownership refusal, and
+  uninstall unwiring.
 - `install.sh` — idempotent copy to `~/.claude/hooks/friction-receipt.py`;
-  `--wire` appends the exact `SessionEnd` command once, while `--force` is
-  required to replace a hand-edited hook. It never removes receipts on
-  uninstall.
+  `--wire` merges one exact-command `SessionEnd` entry under the shared
+  lock/backup/atomic-write protocol, refreshes only the documented no-timeout
+  legacy entry, and reports customized entries with exit 2. `--uninstall`
+  checks ownership, unwires recognized entries before removing the hook, and
+  never removes receipts or rewrites the settings backup.
 - `README.md` — the versioned receipt schema, location, redaction and failure
   contract, and install instructions.
 

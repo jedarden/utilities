@@ -244,6 +244,187 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(destination.read_text(), "operator copy\n")
 
+    def run_installer(self, settings, *arguments):
+        hooks = self.root / "hooks"
+        environment = dict(
+            os.environ,
+            HOME=str(self.root),
+            CLAUDE_HOOKS_DIR=str(hooks),
+            CLAUDE_SETTINGS=str(settings),
+        )
+        return subprocess.run(
+            ["sh", str(HERE.parent / "install.sh"), *arguments],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+
+    @staticmethod
+    def session_command(settings):
+        return [
+            hook.get("command")
+            for entry in settings.get("hooks", {}).get("SessionEnd", [])
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict) and "command" in hook
+        ]
+
+    def test_wire_current_entry_is_byte_idempotent_and_keeps_one_backup(self):
+        settings = self.root / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        original = {
+            "model": "opus",
+            "hooks": {"SessionEnd": [{"hooks": [{
+                "type": "command", "command": "printf unrelated",
+            }]}]},
+        }
+        settings.write_text(json.dumps(original, indent=2) + "\n")
+        before = settings.read_bytes()
+
+        first = self.run_installer(settings, "--wire")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        after_first = settings.read_bytes()
+        self.assertIn("wired", first.stdout)
+        self.assertEqual(
+            self.session_command(json.loads(after_first)),
+            ["printf unrelated", f"python3 {self.root / 'hooks/friction-receipt.py'}"],
+        )
+        owned = json.loads(after_first)["hooks"]["SessionEnd"][1]["hooks"][0]
+        self.assertEqual(owned["timeout"], 10)
+        self.assertEqual((Path(str(settings) + ".bak")).read_bytes(), before)
+
+        second = self.run_installer(settings, "--wire")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("already", second.stdout)
+        self.assertEqual(settings.read_bytes(), after_first)
+
+    def test_wire_refreshes_the_known_legacy_entry_in_place(self):
+        settings = self.root / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        command = f"python3 {self.root / 'hooks/friction-receipt.py'}"
+        original = {
+            "model": "opus",
+            "hooks": {"SessionEnd": [
+                {"hooks": [{"type": "command", "command": "printf keep"}]},
+                {"hooks": [{"type": "command", "command": command}]},
+            ]},
+        }
+        settings.write_text(json.dumps(original, indent=2) + "\n")
+        before = settings.read_bytes()
+
+        result = self.run_installer(settings, "--wire")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("refreshed", result.stdout)
+        merged = json.loads(settings.read_text())
+        self.assertEqual(merged["model"], "opus")
+        self.assertEqual(merged["hooks"]["SessionEnd"][0], original["hooks"]["SessionEnd"][0])
+        self.assertEqual(merged["hooks"]["SessionEnd"][1]["hooks"][0]["timeout"], 10)
+        self.assertEqual(
+            json.loads(Path(str(settings) + ".bak").read_text()),
+            json.loads(before),
+        )
+
+    def test_wire_preserves_customized_entry_and_reports_exit_two(self):
+        settings = self.root / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        command = f"python3 {self.root / 'hooks/friction-receipt.py'}"
+        original = {
+            "hooks": {"SessionEnd": [{"hooks": [{
+                "type": "command",
+                "command": command,
+                "timeout": 7,
+                "operator_note": "keep this",
+            }]}]},
+        }
+        settings.write_text(json.dumps(original, indent=2) + "\n")
+        before = settings.read_bytes()
+
+        result = self.run_installer(settings, "--wire")
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(settings.read_bytes(), before)
+        self.assertFalse(Path(str(settings) + ".bak").exists())
+        self.assertEqual(result.stderr.count("preserved"), 1)
+        self.assertIn("use --wire --force", result.stderr)
+
+    def test_wire_force_replaces_only_customized_timeout(self):
+        settings = self.root / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        command = f"python3 {self.root / 'hooks/friction-receipt.py'}"
+        settings.write_text(json.dumps({
+            "model": "opus",
+            "hooks": {"SessionEnd": [{
+                "operator_note": "keep entry",
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "timeout": 7,
+                    "operator_note": "keep handler",
+                }],
+            }]},
+        }, indent=2) + "\n")
+
+        result = self.run_installer(settings, "--wire", "--force")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        handler = json.loads(settings.read_text())["hooks"]["SessionEnd"][0]
+        self.assertEqual(handler["operator_note"], "keep entry")
+        self.assertEqual(handler["hooks"][0]["operator_note"], "keep handler")
+        self.assertEqual(handler["hooks"][0]["timeout"], 10)
+        self.assertEqual(handler["hooks"][0]["command"], command)
+
+    def test_uninstall_refuses_foreign_hook_and_leaves_it_in_place(self):
+        hooks = self.root / "hooks"
+        hooks.mkdir()
+        destination = hooks / "friction-receipt.py"
+        destination.write_text("operator copy\n")
+
+        result = self.run_installer(self.root / "settings.json", "--uninstall")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refusing to remove", result.stderr)
+        self.assertEqual(destination.read_text(), "operator copy\n")
+
+    def test_uninstall_removes_owned_session_end_entry_but_keeps_backup_and_others(self):
+        settings = self.root / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        unrelated = {"hooks": [{"type": "command", "command": "printf keep"}]}
+        settings.write_text(json.dumps({"hooks": {"SessionEnd": [unrelated]}}) + "\n")
+        first = self.run_installer(settings, "--wire")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        backup = Path(str(settings) + ".bak")
+        backup.write_text("operator backup\n")
+        before_backup = backup.read_bytes()
+
+        result = self.run_installer(settings, "--uninstall")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / "hooks" / "friction-receipt.py").exists())
+        self.assertEqual(backup.read_bytes(), before_backup)
+        merged = json.loads(settings.read_text())
+        self.assertEqual(merged["hooks"].get("SessionEnd"), [unrelated])
+        self.assertFalse(Path(str(settings) + ".lock").exists())
+
+    def test_uninstall_preserves_customized_entry_until_force(self):
+        settings = self.root / "settings.json"
+        first = self.run_installer(settings, "--wire")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        data = json.loads(settings.read_text())
+        data["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] = 7
+        settings.write_text(json.dumps(data, indent=2) + "\n")
+        before = settings.read_bytes()
+
+        refused = self.run_installer(settings, "--uninstall")
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(settings.read_bytes(), before)
+        self.assertTrue((self.root / "hooks" / "friction-receipt.py").exists())
+
+        forced = self.run_installer(settings, "--uninstall", "--force")
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertFalse((self.root / "hooks" / "friction-receipt.py").exists())
+        self.assertEqual(json.loads(settings.read_text())["hooks"]["SessionEnd"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""End-to-end tests for declared install-time utility bundles.
+"""End-to-end tests for install-time utility bundles and wiring conformance.
 
-The tests stage the two utilities an installer is allowed to see into a
+The tests stage the utilities an installer is allowed to see into a
 temporary checkout.  After installation that checkout is removed before the
 installed hooks are executed, so a passing run cannot be explained by a
 runtime lookup into the repository.
@@ -58,6 +58,13 @@ class SelectiveInstallTests(unittest.TestCase):
         """Stage the source and declared install-time bundle for org-rule-guard."""
 
         return self.stage_release("agent-secrets", "org-rule-guard")
+
+    def stage_all_installers(self):
+        """Stage every installer that participates in settings conformance."""
+
+        return self.stage_release(
+            "agent-secrets", "org-rule-guard", "friction-receipt"
+        )
 
     def bundle_declaration(self):
         with MANIFEST.open(encoding="utf-8") as handle:
@@ -348,7 +355,7 @@ sys.stdin.read()
 
     def run_concurrent_wire(self, checkout, home, runtime, settings):
         processes = []
-        for utility in ("org-rule-guard", "agent-secrets"):
+        for utility in ("org-rule-guard", "agent-secrets", "friction-receipt"):
             environment = self.clean_environment(home)
             environment["CLAUDE_SETTINGS"] = str(settings)
             processes.append(
@@ -1173,9 +1180,9 @@ sys.stdin.read()
                 self.assertEqual(handler["timeout"], 10)
                 self.assertEqual(merged["model"], "opus")
 
-    def test_both_installers_conform_to_one_lock_and_merge_concurrently(self):
-        """The independent installers serialize through the same effective lock."""
-        checkout = self.stage_checkout()
+    def test_all_installers_conform_to_one_lock_and_merge_concurrently(self):
+        """All independent installers serialize through one effective lock."""
+        checkout = self.stage_all_installers()
         home = self.temp_dir("cross-utility-wire-home-")
         runtime = self.temp_dir("cross-utility-wire-runtime-")
         real_settings = home / "custom" / "settings.json"
@@ -1219,7 +1226,7 @@ sys.stdin.read()
         original = real_settings.read_bytes()
 
         reported_lock_paths = []
-        for utility in ("org-rule-guard", "agent-secrets"):
+        for utility in ("org-rule-guard", "agent-secrets", "friction-receipt"):
             holder = self.hold_settings_lock(expected_lock)
             try:
                 environment = self.clean_environment(home)
@@ -1244,7 +1251,7 @@ sys.stdin.read()
             reported_lock_paths.append(lock_message.split(" within", 1)[0])
             self.assertEqual(real_settings.read_bytes(), original)
 
-        self.assertEqual(reported_lock_paths, [str(expected_lock)] * 2)
+        self.assertEqual(reported_lock_paths, [str(expected_lock)] * 3)
 
         holder = self.hold_settings_lock(expected_lock)
         processes = self.run_concurrent_wire(
@@ -1318,6 +1325,16 @@ sys.stdin.read()
                     "timeout": 10,
                 }],
             },
+        )
+        session_end = merged["hooks"]["SessionEnd"]
+        self.assertEqual(len(session_end), 1)
+        self.assertEqual(
+            session_end[0],
+            {"hooks": [{
+                "type": "command",
+                "command": f"python3 {home / '.claude/hooks/friction-receipt.py'}",
+                "timeout": 10,
+            }]},
         )
         self.assertTrue(settings_alias.is_symlink())
         self.assertEqual(
