@@ -188,6 +188,75 @@ class SelectiveInstallTests(unittest.TestCase):
                 self.assertFalse(provenance_path.exists())
                 self.assertFalse((home / ".claude").exists())
 
+    def test_status_reports_a_stale_bundled_copy_without_changing_it(self):
+        first = self.stage_checkout()
+        current = self.stage_checkout()
+        home = self.temp_dir("status-stale-bundle-home-")
+        runtime = self.temp_dir("status-stale-bundle-runtime-")
+
+        installed = self.run_install(first, "org-rule-guard", home, runtime)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        bundle_source = current / "agent-secrets" / "hooks" / "credential-guard.py"
+        bundle_source.write_text(
+            bundle_source.read_text(encoding="utf-8")
+            + "\n# newer bundle source\n",
+            encoding="utf-8",
+        )
+        (current / "agent-secrets" / "VERSION").write_text(
+            "0.2.0\n", encoding="utf-8"
+        )
+        before = self.installed_file_snapshot(home)
+
+        status = self.run_install(
+            current,
+            "org-rule-guard",
+            home,
+            runtime,
+            "--status",
+            env_overrides={"PATH": str(self.status_path("status-stale-bundle-bin-"))},
+        )
+
+        self.assertNotEqual(status.returncode, 0)
+        self.assertIn("stale bundle pin", status.stderr)
+        self.assertIn("modified or stale bundled", status.stderr)
+        self.assertIn("reinstall to repair", status.stderr)
+        self.assertEqual(self.installed_file_snapshot(home), before)
+
+    def test_status_reports_post_install_edits_without_changing_the_install(self):
+        cases = (
+            ("agent-secrets", self.stage_release("agent-secrets")),
+            ("org-rule-guard", self.stage_checkout()),
+        )
+        for utility, release in cases:
+            with self.subTest(utility=utility):
+                home = self.temp_dir("status-edited-home-")
+                runtime = self.temp_dir("status-edited-runtime-")
+                installed = self.run_install(release, utility, home, runtime)
+                self.assertEqual(installed.returncode, 0, installed.stderr)
+                if utility == "agent-secrets":
+                    hook = home / ".claude" / "hooks" / "credential-guard.py"
+                else:
+                    hook = home / ".claude" / "hooks" / "org-rule-guard.py"
+                hook.write_text(
+                    hook.read_text(encoding="utf-8") + "\n# local edit\n",
+                    encoding="utf-8",
+                )
+                before = self.installed_file_snapshot(home)
+
+                status = self.run_install(
+                    release,
+                    utility,
+                    home,
+                    runtime,
+                    "--status",
+                    env_overrides={"PATH": str(self.status_path("status-edited-bin-"))},
+                )
+
+                self.assertNotEqual(status.returncode, 0)
+                self.assertIn("modified or stale", status.stderr)
+                self.assertIn("reinstall to repair", status.stderr)
+                self.assertEqual(self.installed_file_snapshot(home), before)
+
     def test_provenance_survives_unrelated_settings_wire(self):
         cases = (
             ("agent-secrets", self.stage_release("agent-secrets")),

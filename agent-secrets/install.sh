@@ -7,7 +7,7 @@
 #   ./install.sh --wire         install (overwriting) and merge/upgrade the
 #                               PreToolUse entry into ~/.claude/settings.json
 #   ./install.sh --wire --force replace customized wiring fields too
-#   ./install.sh --status print the installed version and bundle provenance
+#   ./install.sh --status print provenance and check installed-file drift
 #   ./install.sh --uninstall    remove what this script installed and the
 #                               settings lock (settings and ~/.config/bao-as
 #                               left alone)
@@ -59,6 +59,80 @@ refuse() {
   echo "            and a hand-edited copy is live enforcement this folder" >&2
   echo "            cannot vouch for. Pass --force to remove it anyway." >&2
   exit 1
+}
+
+status_error=0
+
+status_report() {
+  echo "install.sh: drift: $*; reinstall to repair" >&2
+  status_error=1
+}
+
+check_installed_file() {
+  label=$1
+  source=$2
+  destination=$3
+  if [ ! -f "$destination" ]; then
+    status_report "missing installed $label at $destination"
+    return
+  fi
+  if [ ! -f "$source" ]; then
+    status_report "cannot re-derive expected $label from missing $source"
+    return
+  fi
+  if command -v cmp >/dev/null 2>&1; then
+    if ! cmp -s "$source" "$destination"; then
+      status_report "modified or stale $label at $destination"
+    fi
+  elif [ "$(cat "$source")" != "$(cat "$destination")" ]; then
+    status_report "modified or stale $label at $destination"
+  fi
+  if [ -x "$source" ] && [ ! -x "$destination" ]; then
+    status_report "modified mode on installed $label at $destination"
+  fi
+}
+
+check_installed_state() {
+  # The status path intentionally uses only shell built-ins plus cat/cmp.  It
+  # remains useful on a host where python3 is unavailable, while the install
+  # path still enforces the Python prerequisite before writing anything.
+  recorded_utility=
+  recorded_version=
+  in_bundles=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *'"bundles": ['*) in_bundles=1 ;;
+      *'"utility": "'*)
+        value=${line#*: }
+        value=${value#\"}
+        value=${value%%\"*}
+        if [ "$in_bundles" -eq 0 ]; then
+          recorded_utility=$value
+        fi
+        ;;
+      *'"version": "'*)
+        value=${line#*: }
+        value=${value#\"}
+        value=${value%%\"*}
+        if [ "$in_bundles" -eq 0 ]; then
+          recorded_version=$value
+        elif [ -z "${recorded_bundle_version:-}" ]; then
+          recorded_bundle_version=$value
+        fi
+        ;;
+    esac
+  done < "$PROVENANCE_DST"
+
+  if [ "${recorded_utility:-}" != "agent-secrets" ] || [ -z "${recorded_version:-}" ]; then
+    status_report "invalid provenance identity in $PROVENANCE_DST"
+  fi
+  current_version=$(IFS= read -r first_line < "$HERE/VERSION" && printf '%s' "$first_line" || :)
+  if [ -n "${recorded_version:-}" ] && [ "$current_version" != "$recorded_version" ]; then
+    status_report "installed utility v$recorded_version does not match this checkout's v$current_version"
+  fi
+  check_installed_file "credential guard hook" "$HERE/hooks/credential-guard.py" "$HOOK_DST"
+  check_installed_file "bao-as wrapper" "$HERE/bin/bao-as" "$BIN_DST"
+  return "$status_error"
 }
 
 report_previous_install() {
@@ -135,7 +209,8 @@ case "${1:-}" in
       exit 1
     fi
     cat "$PROVENANCE_DST"
-    exit 0 ;;
+    check_installed_state
+    exit $? ;;
   --uninstall)
     require_python3
     if [ -e "$HOOK_DST" ] && [ "$force" -ne 1 ] \

@@ -182,10 +182,16 @@ installed copy without changing anything with:
 ./org-rule-guard/install.sh --status
 ```
 
-The command prints that JSON and exits nonzero when no provenance record is
-present. A forced reinstall reports the previously installed utility version
-and bundle pins before replacing the hook, bundle, and provenance record.
-`--uninstall` removes the provenance record with those installed files.
+The command prints that JSON and performs a read-only installed-state check.
+It re-derives the hook and bundled destination from the provenance record,
+compares both installed files with this checkout, and checks that the sibling
+bundle `VERSION` still matches the recorded pin. Missing, modified, stale,
+or mismatched files are reported to stderr and make the command exit nonzero
+(as does a missing provenance record). Reinstall from the intended release is
+the repair path. A forced reinstall reports the previously installed utility
+version and bundle pins before replacing the hook, bundle, and provenance
+record. `--uninstall` removes the provenance record with those installed
+files.
 
 ### Installed runtime prerequisite
 

@@ -9,6 +9,7 @@ installed layout.
 | Folder | What it is |
 |---|---|
 | [`agent-secrets/`](agent-secrets/) | A credential guard hook for Claude Code, a login wrapper that keeps secret-store tokens out of argv, and prefix-scoped OpenBao/Vault policies — the pieces that let an agent read and write a secrets store without a value ever entering its transcript. |
+| [`friction-receipt/`](friction-receipt/) | A fail-open `SessionEnd` hook that writes bounded, redacted TWILL friction receipts. |
 | [`org-rule-guard/`](org-rule-guard/) | An org-wide `PreToolUse` guard for Claude Code with a JSONL denial log, an installer, and example settings wiring — the same six rules as the live hook, plus the record of every deny the live hook never kept. |
 
 ## Installing one utility
@@ -39,8 +40,9 @@ git clone --branch org-rule-guard/v0.1.0 --depth 1 \
 Replace `v0.1.0` with the released version you want. The utility-specific
 README is the contract for upgrading and removing an installed copy.
 Each installer also records the selected utility version and any install-time
-bundle pins in its installed hook layout; the utility README documents the
-read-only status query for that record.
+bundle pins in its installed hook layout. The read-only `--status` query
+re-derives the installed files from that provenance and reports modified or
+stale files; rerun the installer from the intended release to repair drift.
 
 ### Composing both guards with an existing settings file
 

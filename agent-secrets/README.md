@@ -109,10 +109,14 @@ Query the installed copy without changing anything with:
 ./agent-secrets/install.sh --status
 ```
 
-The command prints that JSON and exits nonzero when no provenance record is
-present. A forced reinstall reports the previously installed utility version
-before replacing the hook, wrapper, and provenance record. `--uninstall`
-removes the provenance record with those installed files.
+The command prints that JSON and performs a read-only installed-state check.
+It compares the installed hook and `bao-as` wrapper with the files from this
+checkout, reports missing, modified, or stale files to stderr, and exits
+nonzero when drift is found (or when no provenance record is present). A
+forced reinstall reports the previously installed utility version before
+replacing the hook, wrapper, and provenance record. Reinstall from the
+intended release is the repair path; `--uninstall` removes the provenance
+record with those installed files.
 
 ### Installed runtime prerequisite
 

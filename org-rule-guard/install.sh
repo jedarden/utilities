@@ -6,7 +6,7 @@
 #   ./install.sh --wire         install (overwriting) and merge/upgrade the
 #                               PreToolUse entry into ~/.claude/settings.json
 #   ./install.sh --wire --force replace customized wiring fields too
-#   ./install.sh --status print the installed version and bundle provenance
+#   ./install.sh --status print provenance and check installed-file drift
 #   ./install.sh --uninstall    remove the installed hook and settings lock
 #                               (settings left alone)
 #
@@ -35,6 +35,112 @@ case " $* " in *" --force"*) force=1 ;; esac
 wire=0
 case " $* " in *" --wire"*) wire=1 ;; esac
 
+status_error=0
+
+status_report() {
+  echo "install.sh: drift: $*; reinstall to repair" >&2
+  status_error=1
+}
+
+check_installed_file() {
+  label=$1
+  source=$2
+  destination=$3
+  if [ ! -f "$destination" ]; then
+    status_report "missing installed $label at $destination"
+    return
+  fi
+  if [ ! -f "$source" ]; then
+    status_report "cannot re-derive expected $label from missing $source"
+    return
+  fi
+  if command -v cmp >/dev/null 2>&1; then
+    if ! cmp -s "$source" "$destination"; then
+      status_report "modified or stale $label at $destination"
+    fi
+  elif [ "$(cat "$source")" != "$(cat "$destination")" ]; then
+    status_report "modified or stale $label at $destination"
+  fi
+  if [ -x "$source" ] && [ ! -x "$destination" ]; then
+    status_report "modified mode on installed $label at $destination"
+  fi
+}
+
+check_installed_state() {
+  recorded_utility=
+  recorded_version=
+  recorded_bundle_utility=
+  recorded_bundle_source=
+  recorded_bundle_destination=
+  recorded_bundle_version=
+  in_bundles=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      *'"bundles": ['*) in_bundles=1 ;;
+      *'"utility": "'*)
+        value=${line#*: }
+        value=${value#\"}
+        value=${value%%\"*}
+        if [ "$in_bundles" -eq 0 ]; then
+          recorded_utility=$value
+        elif [ -z "$recorded_bundle_utility" ]; then
+          recorded_bundle_utility=$value
+        fi
+        ;;
+      *'"version": "'*)
+        value=${line#*: }
+        value=${value#\"}
+        value=${value%%\"*}
+        if [ "$in_bundles" -eq 0 ]; then
+          recorded_version=$value
+        elif [ -z "$recorded_bundle_version" ]; then
+          recorded_bundle_version=$value
+        fi
+        ;;
+      *'"source": "'*)
+        value=${line#*: }
+        value=${value#\"}
+        value=${value%%\"*}
+        recorded_bundle_source=$value
+        ;;
+      *'"destination": "'*)
+        value=${line#*: }
+        value=${value#\"}
+        value=${value%%\"*}
+        recorded_bundle_destination=$value
+        ;;
+    esac
+  done < "$PROVENANCE_DST"
+
+  if [ "${recorded_utility:-}" != "org-rule-guard" ] || [ -z "${recorded_version:-}" ]; then
+    status_report "invalid provenance identity in $PROVENANCE_DST"
+  fi
+  current_version=$(IFS= read -r first_line < "$HERE/VERSION" && printf '%s' "$first_line" || :)
+  if [ -n "${recorded_version:-}" ] && [ "$current_version" != "$recorded_version" ]; then
+    status_report "installed utility v$recorded_version does not match this checkout's v$current_version"
+  fi
+
+  if [ -z "${recorded_bundle_utility:-}" ] || [ -z "${recorded_bundle_source:-}" ] \
+     || [ -z "${recorded_bundle_destination:-}" ] || [ -z "${recorded_bundle_version:-}" ]; then
+    status_report "invalid bundled-dependency provenance in $PROVENANCE_DST"
+    return "$status_error"
+  fi
+  case "$recorded_bundle_utility/$recorded_bundle_source/$recorded_bundle_destination" in
+    /*|../*|*/../*)
+      status_report "unsafe bundled-dependency paths in $PROVENANCE_DST"
+      return "$status_error" ;;
+  esac
+  bundle_source="$HERE/../$recorded_bundle_utility/$recorded_bundle_source"
+  bundle_destination="${HOOK_DST%.py}/$recorded_bundle_destination"
+  bundle_version=$(IFS= read -r first_line < "$HERE/../$recorded_bundle_utility/VERSION" && printf '%s' "$first_line" || :)
+  if [ "$bundle_version" != "$recorded_bundle_version" ]; then
+    status_report "stale bundle pin: provenance records $recorded_bundle_utility v$recorded_bundle_version, source is v$bundle_version"
+  fi
+  check_installed_file "org guard hook" "$HERE/hooks/org-rule-guard.py" "$HOOK_DST"
+  check_installed_file "bundled $recorded_bundle_utility credential guard" "$bundle_source" "$bundle_destination"
+  return "$status_error"
+}
+
 require_python3() {
   python_version=
   if python_version=$(python3 -c \
@@ -59,7 +165,8 @@ case "${1:-}" in
       exit 1
     fi
     cat "$PROVENANCE_DST"
-    exit 0 ;;
+    check_installed_state
+    exit $? ;;
   --uninstall)
     require_python3
     if [ -e "$HOOK_DST" ] && [ "$force" -ne 1 ] \
