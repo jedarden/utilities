@@ -131,17 +131,108 @@ class SelectiveInstallTests(unittest.TestCase):
         )
 
     def read_provenance(self, home, utility):
-        if utility == "agent-secrets":
-            path = home / ".claude" / "hooks" / "agent-secrets" / "provenance.json"
-        else:
-            path = (
-                home
-                / ".claude"
-                / "hooks"
-                / "org-rule-guard"
-                / "provenance.json"
-            )
+        path = self.provenance_path(home, utility)
         return path, json.loads(path.read_text(encoding="utf-8"))
+
+    def provenance_path(self, home, utility):
+        if utility == "agent-secrets":
+            return home / ".claude" / "hooks" / "agent-secrets" / "provenance.json"
+        return (
+            home
+            / ".claude"
+            / "hooks"
+            / "org-rule-guard"
+            / "provenance.json"
+        )
+
+    def installed_file_snapshot(self, home):
+        """Capture installed file contents and modes for read-only assertions."""
+
+        return {
+            path.relative_to(home): (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+            for path in home.rglob("*")
+            if path.is_file()
+        }
+
+    def status_path(self, prefix):
+        path = self.temp_dir(prefix)
+        (path / "dirname").symlink_to(shutil.which("dirname"))
+        (path / "cat").symlink_to(shutil.which("cat"))
+        return path
+
+    def test_status_requires_existing_provenance_record(self):
+        cases = (
+            ("agent-secrets", self.stage_release("agent-secrets")),
+            ("org-rule-guard", self.stage_checkout()),
+        )
+        for utility, release in cases:
+            with self.subTest(utility=utility):
+                home = self.temp_dir("status-before-install-home-")
+                runtime = self.temp_dir("status-before-install-runtime-")
+                provenance_path = self.provenance_path(home, utility)
+                self.assertFalse(provenance_path.exists())
+
+                result = self.run_install(
+                    release,
+                    utility,
+                    home,
+                    runtime,
+                    "--status",
+                    env_overrides={
+                        "PATH": str(self.status_path("status-before-install-bin-"))
+                    },
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("no installed provenance", result.stderr)
+                self.assertFalse(provenance_path.exists())
+                self.assertFalse((home / ".claude").exists())
+
+    def test_provenance_survives_unrelated_settings_wire(self):
+        cases = (
+            ("agent-secrets", self.stage_release("agent-secrets")),
+            ("org-rule-guard", self.stage_checkout()),
+        )
+        for utility, release in cases:
+            with self.subTest(utility=utility):
+                home = self.temp_dir("settings-provenance-home-")
+                runtime = self.temp_dir("settings-provenance-runtime-")
+                settings = runtime / "settings.json"
+                settings.write_text(
+                    json.dumps(
+                        {"model": "opus", "permissions": {"allow": ["Read"]}},
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                initial = self.run_install(release, utility, home, runtime)
+                self.assertEqual(initial.returncode, 0, initial.stderr)
+                provenance_path, provenance = self.read_provenance(home, utility)
+                installed_record = provenance_path.read_bytes()
+
+                changed_settings = json.loads(settings.read_text(encoding="utf-8"))
+                changed_settings["model"] = "sonnet"
+                changed_settings["permissions"]["deny"] = ["Bash"]
+                settings.write_text(
+                    json.dumps(changed_settings, indent=2) + "\n", encoding="utf-8"
+                )
+                wired = self.run_install(
+                    release, utility, home, runtime, "--wire", settings=settings
+                )
+
+                self.assertEqual(wired.returncode, 0, wired.stderr)
+                self.assertEqual(provenance_path.read_bytes(), installed_record)
+                self.assertEqual(
+                    json.loads(provenance_path.read_text(encoding="utf-8")),
+                    provenance,
+                )
+                final_settings = json.loads(settings.read_text(encoding="utf-8"))
+                self.assertEqual(final_settings["model"], changed_settings["model"])
+                self.assertEqual(
+                    final_settings["permissions"], changed_settings["permissions"]
+                )
 
     def hold_settings_lock(self, lock_path):
         code = """import fcntl
@@ -268,6 +359,7 @@ sys.stdin.read()
         home = self.temp_dir("agent-secrets-install-home-")
         runtime = self.temp_dir("agent-secrets-install-runtime-")
         state = self.temp_dir("agent-secrets-install-state-")
+        self.assertFalse(self.provenance_path(home, "agent-secrets").exists())
 
         result = self.run_install(release, "agent-secrets", home, runtime)
 
@@ -293,15 +385,14 @@ sys.stdin.read()
                 "bundles": [],
             },
         )
-        status_path = self.temp_dir("agent-secrets-status-bin-")
-        (status_path / "dirname").symlink_to(shutil.which("dirname"))
-        (status_path / "cat").symlink_to(shutil.which("cat"))
+        installed_before_status = self.installed_file_snapshot(home)
         status = self.run_install(
             release, "agent-secrets", home, runtime, "--status",
-            env_overrides={"PATH": str(status_path)},
+            env_overrides={"PATH": str(self.status_path("agent-secrets-status-bin-"))},
         )
         self.assertEqual(status.returncode, 0, status.stderr)
         self.assertEqual(json.loads(status.stdout), provenance)
+        self.assertEqual(self.installed_file_snapshot(home), installed_before_status)
         self.assertFalse((release / "org-rule-guard").exists())
         self.assertEqual(
             hook_dst.read_bytes(),
@@ -389,6 +480,7 @@ sys.stdin.read()
         home = self.temp_dir("org-rule-guard-install-home-")
         runtime = self.temp_dir("org-rule-guard-install-runtime-")
         state = self.temp_dir("org-rule-guard-install-state-")
+        self.assertFalse(self.provenance_path(home, "org-rule-guard").exists())
 
         source = release / declaration["utility"] / PurePosixPath(declaration["source"])
         source_bytes = source.read_bytes()
@@ -415,15 +507,14 @@ sys.stdin.read()
                 "bundles": [declaration],
             },
         )
-        status_path = self.temp_dir("org-rule-guard-status-bin-")
-        (status_path / "dirname").symlink_to(shutil.which("dirname"))
-        (status_path / "cat").symlink_to(shutil.which("cat"))
+        installed_before_status = self.installed_file_snapshot(home)
         status = self.run_install(
             release, "org-rule-guard", home, runtime, "--status",
-            env_overrides={"PATH": str(status_path)},
+            env_overrides={"PATH": str(self.status_path("org-rule-guard-status-bin-"))},
         )
         self.assertEqual(status.returncode, 0, status.stderr)
         self.assertEqual(json.loads(status.stdout), provenance)
+        self.assertEqual(self.installed_file_snapshot(home), installed_before_status)
         self.assertEqual(bundle_dst.read_bytes(), source_bytes)
         self.assertEqual(stat.S_IMODE(bundle_dst.stat().st_mode), 0o755)
         self.assertEqual(bundle_dst.parent, bundle_root)
@@ -1179,6 +1270,18 @@ sys.stdin.read()
         self.assertIn("previously installed agent-secrets v0.1.0", replacement.stdout)
         _, provenance = self.read_provenance(home, "agent-secrets")
         self.assertEqual(provenance["version"], new_version)
+        installed_before_status = self.installed_file_snapshot(home)
+        status = self.run_install(
+            second,
+            "agent-secrets",
+            home,
+            runtime,
+            "--status",
+            env_overrides={"PATH": str(self.status_path("agent-secrets-upgrade-status-bin-"))},
+        )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(json.loads(status.stdout), provenance)
+        self.assertEqual(self.installed_file_snapshot(home), installed_before_status)
 
     def test_reinstall_reports_previous_bundle_provenance_before_replacing_org_guard(self):
         first = self.stage_checkout()
@@ -1209,6 +1312,18 @@ sys.stdin.read()
         _, provenance = self.read_provenance(home, "org-rule-guard")
         self.assertEqual(provenance["version"], new_version)
         self.assertEqual(provenance["bundles"][0]["version"], new_version)
+        installed_before_status = self.installed_file_snapshot(home)
+        status = self.run_install(
+            second,
+            "org-rule-guard",
+            home,
+            runtime,
+            "--status",
+            env_overrides={"PATH": str(self.status_path("org-rule-guard-upgrade-status-bin-"))},
+        )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(json.loads(status.stdout), provenance)
+        self.assertEqual(self.installed_file_snapshot(home), installed_before_status)
 
 
 if __name__ == "__main__":
