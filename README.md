@@ -50,7 +50,7 @@ stale files; rerun the installer from the intended release to repair drift.
 
 ### Composing all three utilities with an existing settings file
 
-[`docs/examples/settings-both.json`](docs/examples/settings-both.json) shows
+[`docs/examples/settings-composed.json`](docs/examples/settings-composed.json) shows
 the resulting `PreToolUse` and `SessionEnd` entries, but it is a reference
 snippet, not a replacement for a user's settings file. To merge all three
 shipped utilities into an existing `settings.json`, run all three installers
@@ -105,7 +105,7 @@ is the pre-wiring file: the second and third installers and later `--wire` runs 
 untouched. If the
 settings file does not exist yet, the installer creates it without a backup
 because there is no prior file to preserve. Do not rerun a manual `cp` over
-the backup, and do not copy `settings-both.json` over an existing file or
+the backup, and do not copy `settings-composed.json` over an existing file or
 concatenate the example JSON with an existing object; doing so can discard unrelated settings and
 hooks. If a non-default settings path is used, pass that same path through
 `CLAUDE_SETTINGS` on every run. For a symlinked `CLAUDE_SETTINGS`, the backup
@@ -205,7 +205,7 @@ byte-for-byte unchanged. It never appends a hook entry to such a file.
   are checked against `check-structure.py` by the structure test suite
 - `docs/notes/` — features, constraints, design decisions
 - `docs/examples/` — shipped wiring examples, including the combined
-  [`settings-both.json`](docs/examples/settings-both.json) configuration for
+  [`settings-composed.json`](docs/examples/settings-composed.json) configuration for
   running both PreToolUse guards and the SessionEnd producer
 - `docs/research/` — external reference material and prior art
 - `docs/plan/plan.md` — complete plan for the repo

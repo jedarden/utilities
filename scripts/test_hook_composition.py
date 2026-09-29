@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ORG_HOOK = ROOT / "org-rule-guard" / "hooks" / "org-rule-guard.py"
 CREDENTIAL_HOOK = ROOT / "agent-secrets" / "hooks" / "credential-guard.py"
-COMBINED_SETTINGS = ROOT / "docs" / "examples" / "settings-both.json"
+COMBINED_SETTINGS = ROOT / "docs" / "examples" / "settings-composed.json"
 STRUCTURE_DOC = ROOT / "docs" / "structure-check.md"
 
 

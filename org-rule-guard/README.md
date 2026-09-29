@@ -105,7 +105,7 @@ Merge the standalone entry below into the operator's `~/.claude/settings.json`;
 keep any unrelated settings already present. The complete checked-in example
 is [`examples/settings.json`](examples/settings.json). To install the optional
 companion too, use the combined example at
-[`../docs/examples/settings-both.json`](../docs/examples/settings-both.json),
+[`../docs/examples/settings-composed.json`](../docs/examples/settings-composed.json),
 or run the relevant utilities' `install.sh --wire` commands against the same
 settings file. The combined example includes friction-receipt's event-scoped
 `SessionEnd` entry as well; each installer appends only its own entry and

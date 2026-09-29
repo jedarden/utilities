@@ -238,7 +238,7 @@ class StructureCheckerTests(unittest.TestCase):
         )
         docs = self.fixture / "docs" / "examples"
         docs.mkdir(parents=True)
-        (docs / "settings-both.json").write_text(
+        (docs / "settings-composed.json").write_text(
             json.dumps({
                 "hooks": {
                     "PreToolUse": [
@@ -399,7 +399,7 @@ class StructureCheckerTests(unittest.TestCase):
 
     def test_combined_settings_timeout_drift_fails(self):
         self.write_wiring_fixture()
-        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings_path = self.fixture / "docs" / "examples" / "settings-composed.json"
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
         settings["hooks"]["PreToolUse"][1]["hooks"][0]["timeout"] = 5
         settings_path.write_text(json.dumps(settings), encoding="utf-8")
@@ -411,7 +411,7 @@ class StructureCheckerTests(unittest.TestCase):
 
     def test_combined_settings_matcher_drift_fails(self):
         self.write_wiring_fixture()
-        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings_path = self.fixture / "docs" / "examples" / "settings-composed.json"
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
         settings["hooks"]["PreToolUse"][0]["matcher"] = "Write|Edit|Bash"
         settings_path.write_text(json.dumps(settings), encoding="utf-8")
@@ -423,7 +423,7 @@ class StructureCheckerTests(unittest.TestCase):
 
     def test_combined_settings_session_end_drift_fails(self):
         self.write_wiring_fixture()
-        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings_path = self.fixture / "docs" / "examples" / "settings-composed.json"
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
         settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] = 5
         settings_path.write_text(json.dumps(settings), encoding="utf-8")
@@ -435,13 +435,13 @@ class StructureCheckerTests(unittest.TestCase):
 
     def test_combined_settings_invalid_json_fails(self):
         self.write_wiring_fixture()
-        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings_path = self.fixture / "docs" / "examples" / "settings-composed.json"
         settings_path.write_text("{\n", encoding="utf-8")
 
         result = self.run_checker()
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("settings-both.json: invalid JSON", result.stderr)
+        self.assertIn("settings-composed.json: invalid JSON", result.stderr)
 
     def test_shipped_org_example_matcher_drift_fails(self):
         self.write_wiring_fixture()

@@ -346,7 +346,7 @@ version-pinned install-time bundle declared by `org-rule-guard`'s
 installed layout, so no installed code looks up this utility at runtime. This
 hook adds a broader pattern set and optional extra patterns when both guards are
 installed. Wire the two independent `PreToolUse` entries with the checked-in
-[`../docs/examples/settings-both.json`](../docs/examples/settings-both.json)
+[`../docs/examples/settings-composed.json`](../docs/examples/settings-composed.json)
 example; that combined example also includes friction-receipt's `SessionEnd`
 entry. When installing all three, run all three installers' `--wire` modes
 against the same settings file.

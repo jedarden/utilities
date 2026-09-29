@@ -53,11 +53,12 @@ runtime leaf. A bundle never permits a runtime reference to the sibling.
 The gate verifies every utility-owned hook settings example against the output
 of that utility's installer. The event name is part of the contract: the two
 guard examples are `PreToolUse`, while friction-receipt's example is
-`SessionEnd`. The combined example contains all three shipped entries, and
-the gate runs all three installers before comparing both events. These checks
-are contract checks rather than additional dependency allowlists, and they
-catch missing examples, invalid JSON, event or matcher drift, and installer
-output drift.
+`SessionEnd`. The combined composition reference is
+`docs/examples/settings-composed.json`; it contains all three shipped entries,
+and the gate runs all three installers before comparing both events. These
+checks are contract checks rather than additional dependency allowlists, and
+they catch missing examples, invalid JSON, event or matcher drift, and
+installer output drift.
 
 ## Hook matcher inventory
 
