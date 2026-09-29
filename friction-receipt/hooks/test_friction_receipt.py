@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "friction-receipt.py"
+RECEIPT_DOC = HERE.parent / "docs" / "receipt-contract.md"
 
 
 def load_hook_module():
@@ -19,6 +21,79 @@ def load_hook_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def documented_table(heading):
+    lines = RECEIPT_DOC.read_text(encoding="utf-8").splitlines()
+    try:
+        start = lines.index(heading)
+    except ValueError as error:
+        raise AssertionError(f"receipt contract is missing table {heading!r}") from error
+    rows = []
+    for line in lines[start + 1:]:
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and all(set(cell) <= {"-", ":", " "} for cell in cells):
+            continue
+        rows.append(cells)
+    return rows
+
+
+def code_cells(cell):
+    return re.findall(r"`([^`]+)`", cell)
+
+
+class DocumentationSync(unittest.TestCase):
+    """Keep the normative receipt document tied to the producer code."""
+
+    def test_documented_top_level_fields_match_hook(self):
+        module = load_hook_module()
+        rows = documented_table("| Field | JSON type | Bound or fixed value |")
+        documented = [
+            (code_cells(row[0])[0], code_cells(row[1])[0], code_cells(row[2])[0])
+            for row in rows
+        ]
+        self.assertEqual(documented, list(module.RECEIPT_FIELD_CONTRACT))
+        self.assertEqual(
+            tuple(field for field, _kind, _bound in documented),
+            module._RECEIPT_KEYS,
+        )
+        self.assertEqual(
+            set(module.build_receipt({})), set(module._RECEIPT_KEYS)
+        )
+
+    def test_documented_nested_records_match_hook(self):
+        module = load_hook_module()
+        rows = documented_table("| Collection | Object keys | Per-key bounds |")
+        documented = [
+            (
+                code_cells(row[0])[0],
+                tuple(code_cells(row[1])),
+                tuple(code_cells(row[2])),
+            )
+            for row in rows
+        ]
+        self.assertEqual(documented, list(module.RECEIPT_NESTED_CONTRACT))
+
+    def test_documented_redaction_patterns_match_hook(self):
+        module = load_hook_module()
+        rows = documented_table("| Label | Python `re` pattern |")
+        documented = [(row[0], code_cells(row[1])[0]) for row in rows]
+        expected = [
+            (label, pattern) for label, pattern in module._REDACTION_PATTERNS
+        ]
+        self.assertEqual(documented, expected)
+        self.assertEqual(
+            [pattern.pattern for pattern in module._SECRET_PATTERNS],
+            [pattern for _label, pattern in expected],
+        )
+
+    def test_documented_redaction_steps_match_hook(self):
+        module = load_hook_module()
+        rows = documented_table("| Step | Hook symbol | Effect |")
+        documented = [(row[0], code_cells(row[1])[0]) for row in rows]
+        self.assertEqual(documented, list(module.REDACTION_STEPS))
 
 
 class ReceiptTests(unittest.TestCase):

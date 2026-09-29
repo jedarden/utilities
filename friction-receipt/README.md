@@ -11,6 +11,11 @@ root `LICENSE` text when redistributing an installed copy.
 
 ## Receipt contract
 
+The normative payload, provenance, redaction, bounding, and TWILL consumer
+compatibility contract is [`docs/receipt-contract.md`](docs/receipt-contract.md).
+The summary below calls out the installed store and lifecycle; keep the two
+documents synchronized when the receipt shape changes.
+
 Receipts are written to
 `${XDG_STATE_HOME:-$HOME/.local/state}/twill/friction-receipts/<session_id>.json`
 with mode `0600` in a mode `0700` directory. `TWILL_RECEIPTS_DIR` overrides the

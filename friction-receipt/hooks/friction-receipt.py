@@ -23,32 +23,58 @@ SCHEMA = "twill-friction-receipt/v1"
 RECEIPTS_DIR_ENV = "TWILL_RECEIPTS_DIR"
 MAX_RECEIPT_BYTES = 64 * 1024
 MAX_TEXT = 240
+MAX_SAFE_TEXT = 128
+MAX_SESSION_ID = 128
+MAX_REASON = 128
+MAX_TIMESTAMP = 32
+MAX_CWD = 160
+MAX_DENIAL_TIMESTAMP = 32
+MAX_DENIAL_FIELD = 128
+MAX_ERROR_SIGNATURE = 240
 MAX_ITEMS = 64
 MAX_DENIALS = 128
-_RECEIPT_KEYS = (
-    "schema",
-    "session_id",
-    "ended_at",
-    "reason",
-    "cwd",
-    "rules_consulted",
-    "denials",
-    "unresolved_errors",
-    "ended_mid_task",
+RECEIPT_FIELD_CONTRACT = (
+    ("schema", "string", "SCHEMA"),
+    ("session_id", "string", "MAX_SESSION_ID"),
+    ("ended_at", "string", "MAX_TIMESTAMP"),
+    ("reason", "string", "MAX_REASON"),
+    ("cwd", "string", "MAX_CWD"),
+    ("rules_consulted", "array<string>", "MAX_ITEMS"),
+    ("denials", "array<object>", "MAX_DENIALS"),
+    ("unresolved_errors", "array<object>", "MAX_ITEMS"),
+    ("ended_mid_task", "boolean", "none"),
 )
+RECEIPT_NESTED_CONTRACT = (
+    ("denials", ("ts", "rule_id", "tool"),
+     ("MAX_DENIAL_TIMESTAMP", "MAX_DENIAL_FIELD", "MAX_DENIAL_FIELD")),
+    ("unresolved_errors", ("kind", "signature"),
+     ("none", "MAX_ERROR_SIGNATURE")),
+)
+_RECEIPT_KEYS = tuple(field for field, _kind, _bound in RECEIPT_FIELD_CONTRACT)
 
-_SECRET_PATTERNS = (
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}"),
-    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{30,}"),
-    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}"),
-    re.compile(
+_REDACTION_PATTERNS = (
+    ("GitHub token", r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
+    ("GitHub fine-grained PAT", r"\bgithub_pat_[A-Za-z0-9_]{40,}"),
+    ("AWS access key id", r"\bAKIA[0-9A-Z]{16}\b"),
+    ("Slack token", r"\bxox[baprs]-[A-Za-z0-9-]{20,}"),
+    ("Anthropic API key", r"\bsk-ant-[A-Za-z0-9_-]{30,}"),
+    ("Bearer token", r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+    (
+        "PEM private key",
         r"-{5}BEGIN (?:[A-Z]+ )?PRIVATE KEY-{5}.*?-{5}END "
         r"(?:[A-Z]+ )?PRIVATE KEY-{5}",
-        re.S,
     ),
+)
+REDACTION_STEPS = (
+    ("credential-shaped matches", "_SECRET_PATTERNS"),
+    ("whitespace normalization", "_redact"),
+    ("field length bound", "_redact"),
+    ("safe identifier filtering", "_safe"),
+)
+
+_SECRET_PATTERNS = tuple(
+    re.compile(pattern, re.S if "PRIVATE KEY" in pattern else 0)
+    for _label, pattern in _REDACTION_PATTERNS
 )
 _RULE_FILE = re.compile(r"(?:^|/)(CLAUDE\.md|AGENTS\.md|MEMORY\.md)$", re.I)
 _SKILL_FILE = re.compile(r"(?:^|/)(?:\.claude/)?skills/([^/]+)/", re.I)
@@ -62,7 +88,7 @@ def _redact(value, limit=MAX_TEXT):
     return " ".join(text.split())[:limit]
 
 
-def _safe(value, limit=128):
+def _safe(value, limit=MAX_SAFE_TEXT):
     text = _redact(value, limit)
     return re.sub(r"[^A-Za-z0-9_.:/-]", "_", text).strip("._")[:limit]
 
@@ -93,7 +119,7 @@ def _receipt_path(directory, session_id, input_data):
     if safe:
         return os.path.join(directory, safe + ".json")
     seed = "|".join(
-        _redact(input_data.get(key), 240)
+        _redact(input_data.get(key), MAX_TEXT)
         for key in ("cwd", "transcript_path", "reason")
     )
     return os.path.join(
@@ -147,7 +173,9 @@ def _transcript_summary(path):
                     if rule:
                         consulted.add(rule)
                     if block.get("name") == "Bash" and isinstance(block.get("id"), str):
-                        pending[block["id"]] = _redact(tool_input.get("command"))
+                        pending[block["id"]] = _redact(
+                            tool_input.get("command"), MAX_ERROR_SIGNATURE
+                        )
                 elif block.get("type") == "tool_result":
                     command = pending.pop(block.get("tool_use_id"), None)
                     if block.get("is_error") is True:
@@ -159,14 +187,16 @@ def _transcript_summary(path):
                                 if isinstance(item, dict)
                             )
                         unresolved.append({
-                            "signature": _redact(result or command or "tool error"),
+                            "signature": _redact(
+                                result or command or "tool error", MAX_ERROR_SIGNATURE
+                            ),
                             "kind": "tool_error",
                         })
     finally:
         handle.close()
     for command in pending.values():
         unresolved.append({
-            "signature": _redact(command or "unresolved command"),
+            "signature": _redact(command or "unresolved command", MAX_ERROR_SIGNATURE),
             "kind": "unresolved_run",
         })
     unique = []
@@ -196,9 +226,9 @@ def _read_denials(session_id):
                 if not isinstance(record, dict) or record.get("session_id") != session_id:
                     continue
                 records.append({
-                    "ts": _redact(record.get("ts"), 32),
-                    "rule_id": _safe(record.get("rule_id")),
-                    "tool": _safe(record.get("tool")),
+                    "ts": _redact(record.get("ts"), MAX_DENIAL_TIMESTAMP),
+                    "rule_id": _safe(record.get("rule_id"), MAX_DENIAL_FIELD),
+                    "tool": _safe(record.get("tool"), MAX_DENIAL_FIELD),
                 })
         finally:
             handle.close()
@@ -206,14 +236,14 @@ def _read_denials(session_id):
 
 
 def build_receipt(input_data):
-    session_id = _safe(input_data.get("session_id"))
+    session_id = _safe(input_data.get("session_id"), MAX_SESSION_ID)
     consulted, unresolved, pending = _transcript_summary(input_data.get("transcript_path"))
     return {
         "schema": SCHEMA,
         "session_id": session_id or "unknown",
         "ended_at": _utcnow(),
-        "reason": _safe(input_data.get("reason") or "other") or "other",
-        "cwd": _redact(input_data.get("cwd"), 160),
+        "reason": _safe(input_data.get("reason") or "other", MAX_REASON) or "other",
+        "cwd": _redact(input_data.get("cwd"), MAX_CWD),
         "rules_consulted": sorted(consulted)[:MAX_ITEMS],
         "denials": _read_denials(input_data.get("session_id")),
         "unresolved_errors": unresolved,
@@ -232,10 +262,10 @@ def _minimal_receipt(receipt):
     """Return a valid, small receipt if an otherwise valid record is oversized."""
     return {
         "schema": SCHEMA,
-        "session_id": _safe(receipt.get("session_id"), 128) or "unknown",
-        "ended_at": _redact(receipt.get("ended_at"), 32),
-        "reason": _safe(receipt.get("reason"), 128) or "other",
-        "cwd": _redact(receipt.get("cwd"), 160),
+        "session_id": _safe(receipt.get("session_id"), MAX_SESSION_ID) or "unknown",
+        "ended_at": _redact(receipt.get("ended_at"), MAX_TIMESTAMP),
+        "reason": _safe(receipt.get("reason"), MAX_REASON) or "other",
+        "cwd": _redact(receipt.get("cwd"), MAX_CWD),
         "rules_consulted": [],
         "denials": [],
         "unresolved_errors": [],
