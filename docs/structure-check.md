@@ -53,9 +53,11 @@ runtime leaf. A bundle never permits a runtime reference to the sibling.
 The gate verifies every utility-owned hook settings example against the output
 of that utility's installer. The event name is part of the contract: the two
 guard examples are `PreToolUse`, while friction-receipt's example is
-`SessionEnd`. Those checks are contract checks rather than additional
-dependency allowlists, and they catch missing examples, invalid JSON, event or
-matcher drift, and installer output drift.
+`SessionEnd`. The combined example contains all three shipped entries, and
+the gate runs all three installers before comparing both events. These checks
+are contract checks rather than additional dependency allowlists, and they
+catch missing examples, invalid JSON, event or matcher drift, and installer
+output drift.
 
 ## Hook matcher inventory
 
@@ -109,8 +111,8 @@ hook an explicit 10-second timeout. This is the expected worst-case latency
 budget for `agent-secrets`'s `credential-guard.py`, `org-rule-guard`'s
 `org-rule-guard.py`, and friction-receipt's `friction-receipt.py`; no hook is
 allowed to inherit the harness default. `scripts/check-structure.py` checks
-these timeout fields in the standalone examples, the combined `PreToolUse`
-example, and the output produced by all three installers.
+these timeout fields in the standalone examples, the combined `PreToolUse` and
+`SessionEnd` examples, and the output produced by all three installers.
 
 ## Package-manager command inventory
 

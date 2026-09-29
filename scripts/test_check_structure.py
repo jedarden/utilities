@@ -258,7 +258,14 @@ class StructureCheckerTests(unittest.TestCase):
                                 "timeout": 10,
                             }],
                         },
-                    ]
+                    ],
+                    "SessionEnd": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": "python3 ~/.claude/hooks/friction-receipt.py",
+                            "timeout": 10,
+                        }],
+                    }],
                 }
             }),
             encoding="utf-8",
@@ -382,7 +389,7 @@ class StructureCheckerTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_combined_settings_wiring_matches_both_installers(self):
+    def test_combined_settings_wiring_matches_all_installers(self):
         self.write_wiring_fixture()
 
         result = self.run_checker()
@@ -413,6 +420,18 @@ class StructureCheckerTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("PreToolUse wiring does not match", result.stderr)
+
+    def test_combined_settings_session_end_drift_fails(self):
+        self.write_wiring_fixture()
+        settings_path = self.fixture / "docs" / "examples" / "settings-both.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] = 5
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+
+        result = self.run_checker()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("friction-receipt.py must declare timeout 10", result.stderr)
 
     def test_combined_settings_invalid_json_fails(self):
         self.write_wiring_fixture()

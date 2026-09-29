@@ -9,6 +9,7 @@ runtime lookup into the repository.
     python3 -m unittest discover -s scripts -p 'test_install_bundles.py' -v
 """
 
+import itertools
 import json
 import os
 import shutil
@@ -581,9 +582,9 @@ sys.stdin.read()
         return settings
 
     def run_combined_wire_order(self, order, customized_org=False):
-        """Run both installers from identical starting settings bytes."""
+        """Run all three installers from identical starting settings bytes."""
 
-        checkout = self.stage_checkout()
+        checkout = self.stage_all_installers()
         home = self.temp_dir("order-independent-wire-home-")
         runtime = self.temp_dir("order-independent-wire-runtime-")
         settings = home / ".claude" / "settings.json"
@@ -609,23 +610,25 @@ sys.stdin.read()
         }
 
     def canonical_combined_settings(self, settings, home):
-        """Compare settings while making guard entry order insignificant."""
+        """Compare settings while making independent entry order insignificant."""
 
         canonical = json.loads(json.dumps(settings))
         prefix = f"python3 {home}/"
-        entries = canonical["hooks"]["PreToolUse"]
-        for entry in entries:
-            for hook in entry.get("hooks", []):
-                command = hook.get("command")
-                if isinstance(command, str) and command.startswith(prefix):
-                    hook["command"] = "python3 ~/" + command[len(prefix):]
-        canonical["hooks"]["PreToolUse"] = sorted(
-            entries, key=lambda entry: json.dumps(entry, sort_keys=True)
-        )
+        for event in ("PreToolUse", "SessionEnd"):
+            entries = canonical["hooks"][event]
+            for entry in entries:
+                for hook in entry.get("hooks", []):
+                    command = hook.get("command")
+                    if isinstance(command, str) and command.startswith(prefix):
+                        hook["command"] = "python3 ~/" + command[len(prefix):]
+            canonical["hooks"][event] = sorted(
+                entries,
+                key=lambda entry: json.dumps(entry, sort_keys=True),
+            )
         return canonical
 
     def combined_report(self, run):
-        """Return the order-independent report facts emitted by both runs."""
+        """Return order-independent report facts emitted by all three runs."""
 
         home = run["home"]
         replacements = sorted(
@@ -1020,43 +1023,59 @@ sys.stdin.read()
         self.assertEqual(settings.read_bytes(), after_first_wire)
 
     def test_combined_wire_is_order_independent(self):
-        """Either append order has the same settings, backup, lock, and report facts."""
-        orders = (
-            ("org-rule-guard", "agent-secrets"),
-            ("agent-secrets", "org-rule-guard"),
-        )
-        first, second = [self.run_combined_wire_order(order) for order in orders]
+        """Every three-installer permutation has the same settings and artifacts."""
+        orders = tuple(itertools.permutations(
+            ("org-rule-guard", "agent-secrets", "friction-receipt")
+        ))
+        runs = [self.run_combined_wire_order(order) for order in orders]
 
-        self.assert_combined_runs_match(first, second)
-        report = self.combined_report(first)
-        self.assertEqual(report["returncodes"], [0, 0])
+        for run in runs[1:]:
+            self.assert_combined_runs_match(runs[0], run)
+        for run in runs:
+            session_end = json.loads(
+                run["settings"].read_text(encoding="utf-8")
+            )["hooks"]["SessionEnd"]
+            self.assertEqual(
+                session_end,
+                [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": (
+                            f"python3 {run['home'] / '.claude/hooks/friction-receipt.py'}"
+                        ),
+                        "timeout": 10,
+                    }],
+                }],
+            )
+        report = self.combined_report(runs[0])
+        self.assertEqual(report["returncodes"], [0, 0, 0])
+        self.assertEqual(
+            sum(line.startswith("backup     ") for line in report["stdout"]), 1
+        )
+        self.assertEqual(
+            sum(line.startswith("wired      ") for line in report["stdout"]), 3
+        )
+        self.assertEqual(report["stderr"], [])
+
+    def test_combined_wire_preserves_customization_in_either_order(self):
+        """A customized guard is preserved in every three-installer permutation."""
+        orders = tuple(itertools.permutations(
+            ("org-rule-guard", "agent-secrets", "friction-receipt")
+        ))
+        runs = [
+            self.run_combined_wire_order(order, customized_org=True)
+            for order in orders
+        ]
+
+        for run in runs[1:]:
+            self.assert_combined_runs_match(runs[0], run)
+        report = self.combined_report(runs[0])
+        self.assertEqual(report["returncodes"], [0, 0, 2])
         self.assertEqual(
             sum(line.startswith("backup     ") for line in report["stdout"]), 1
         )
         self.assertEqual(
             sum(line.startswith("wired      ") for line in report["stdout"]), 2
-        )
-        self.assertEqual(report["stderr"], [])
-
-    def test_combined_wire_preserves_customization_in_either_order(self):
-        """A customized guard entry reports preserved without order-dependent changes."""
-        orders = (
-            ("org-rule-guard", "agent-secrets"),
-            ("agent-secrets", "org-rule-guard"),
-        )
-        first, second = [
-            self.run_combined_wire_order(order, customized_org=True)
-            for order in orders
-        ]
-
-        self.assert_combined_runs_match(first, second)
-        report = self.combined_report(first)
-        self.assertEqual(report["returncodes"], [0, 2])
-        self.assertEqual(
-            sum(line.startswith("backup     ") for line in report["stdout"]), 1
-        )
-        self.assertEqual(
-            sum(line.startswith("wired      ") for line in report["stdout"]), 1
         )
         self.assertEqual(
             sum(line.startswith("preserved  ") for line in report["stderr"]), 1

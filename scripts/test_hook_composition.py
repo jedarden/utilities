@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Integration tests for the two independent PreToolUse guards.
+"""Integration tests for the two guards and the SessionEnd producer.
 
 The guards deliberately remain separate processes. These tests model the
 host passing the same payload to both handlers, in either order, and verify
 that the optional companion cannot remove org-rule-guard's standalone
-credential coverage.
+credential coverage. The combined settings example also carries the
+event-scoped friction-receipt entry.
 """
 
 import json
@@ -138,7 +139,7 @@ class HookComposition(unittest.TestCase):
         self.assertEqual(len(documented), len(set(documented)))
         self.assertEqual(set(documented), expected_tools)
 
-    def test_combined_settings_wire_both_independent_handlers(self):
+    def test_combined_settings_wires_all_shipped_handlers(self):
         with COMBINED_SETTINGS.open(encoding="utf-8") as handle:
             settings = json.load(handle)
 
@@ -153,6 +154,18 @@ class HookComposition(unittest.TestCase):
         self.assertEqual(entries[1]["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash")
         self.assertEqual(entries[0]["hooks"][0]["timeout"], 10)
         self.assertEqual(entries[1]["hooks"][0]["timeout"], 10)
+
+        session_end = settings["hooks"]["SessionEnd"]
+        self.assertEqual(len(session_end), 1)
+        self.assertNotIn("matcher", session_end[0])
+        self.assertEqual(
+            session_end[0]["hooks"][0],
+            {
+                "type": "command",
+                "command": "python3 ~/.claude/hooks/friction-receipt.py",
+                "timeout": 10,
+            },
+        )
 
     def test_shipped_matchers_equal_each_hooks_supported_tools(self):
         with COMBINED_SETTINGS.open(encoding="utf-8") as handle:

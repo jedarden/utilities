@@ -106,9 +106,10 @@ keep any unrelated settings already present. The complete checked-in example
 is [`examples/settings.json`](examples/settings.json). To install the optional
 companion too, use the combined example at
 [`../docs/examples/settings-both.json`](../docs/examples/settings-both.json),
-or run both utilities' `install.sh --wire` commands against the same settings
-file. Each installer appends only its own entry and preserves unrelated
-settings.
+or run the relevant utilities' `install.sh --wire` commands against the same
+settings file. The combined example includes friction-receipt's event-scoped
+`SessionEnd` entry as well; each installer appends only its own entry and
+preserves unrelated settings.
 
 ```json
 {
@@ -168,10 +169,10 @@ and HUP/INT/TERM interruptions remove the current temporary file; a hard kill
 can leave one for the next `--wire` run to reap. Rewriting an existing file
 preserves its permission bits,
 including mode `0600`. If the settings file does not exist, `--wire` creates it
-with mode `0600`, regardless of the process umask. If the two utility
-installers run concurrently, the
-second waits and rereads the first result, preserving both hook entries and
-unrelated settings. Manual writers that do not honor the same advisory lock
+with mode `0600`, regardless of the process umask. If all three utility
+installers run concurrently, each waits and rereads the latest result,
+preserving all three shipped hook entries and unrelated settings. Manual
+writers that do not honor the same advisory lock
 must not edit the file during a wire; their races are outside this guarantee.
 
 The lock file is created lazily with mode `0600` (and is corrected to that
@@ -249,13 +250,13 @@ backed up, or replaced. A final-component symlink is preserved and its target
 is updated; the target's directory receives the `.lock`, temporary file, and
 `.bak`. The target must be writable, and its parent must exist.
 
-The two installers do not coordinate different settings files. If one run
+The shipped installers do not coordinate different settings files. If one run
 uses path A and a later run uses distinct path B, each file receives only the
 entry for the utility run against it, and each existing file gets its own
 one-time pre-wiring `.bak`. Neither backup is a rollback point for the
-combined installation. To compose both guards and retain one rollback point,
-run both installers against the same effective settings target (the same path
-or symlink-resolved target) every time.
+combined installation. To compose all three shipped utilities and retain one
+rollback point, run all three installers against the same effective settings
+target (the same path or symlink-resolved target) every time.
 
 When `--wire` changes an existing settings file, it creates
 the effective settings target's `.bak` (normally

@@ -35,6 +35,10 @@ git clone --branch agent-secrets/v0.1.0 --depth 1 \
 git clone --branch org-rule-guard/v0.1.0 --depth 1 \
   https://git.ardenone.com/jedarden/utilities.git ~/utilities-org-rule-guard
 ~/utilities-org-rule-guard/org-rule-guard/install.sh --wire
+
+git clone --branch friction-receipt/v0.1.0 --depth 1 \
+  https://git.ardenone.com/jedarden/utilities.git ~/utilities-friction-receipt
+~/utilities-friction-receipt/friction-receipt/install.sh --wire
 ```
 
 Replace `v0.1.0` with the released version you want. The utility-specific
@@ -44,16 +48,20 @@ bundle pins in its installed hook layout. The read-only `--status` query
 re-derives the installed files from that provenance and reports modified or
 stale files; rerun the installer from the intended release to repair drift.
 
-### Composing both guards with an existing settings file
+### Composing all three utilities with an existing settings file
 
 [`docs/examples/settings-both.json`](docs/examples/settings-both.json) shows
-the resulting `PreToolUse` entries, but it is a reference snippet, not a
-replacement for a user's settings file. To merge both guards into an existing
-`settings.json`, run both installers with the same `CLAUDE_SETTINGS` path:
+the resulting `PreToolUse` and `SessionEnd` entries, but it is a reference
+snippet, not a replacement for a user's settings file. To merge all three
+shipped utilities into an existing `settings.json`, run all three installers
+with the same `CLAUDE_SETTINGS` path:
 
-Both guards have the same explicit 10-second hook latency budget. The combined
-example and both installers declare `"timeout": 10` for their command entries;
-this keeps either guard from inheriting the harness default.
+The two guards and friction-receipt have the same explicit 10-second hook
+latency budget. The combined example and all three installers declare
+`"timeout": 10` for their command entries; this keeps any hook from inheriting
+the harness default. The two guards contribute `PreToolUse` entries with the
+closed five-tool matcher; friction-receipt contributes an event-scoped
+`SessionEnd` entry with no matcher.
 
 ```bash
 SETTINGS="$HOME/.claude/settings.json"
@@ -61,18 +69,22 @@ CLAUDE_SETTINGS="$SETTINGS" \
   ~/utilities-org-rule-guard/org-rule-guard/install.sh --wire
 CLAUDE_SETTINGS="$SETTINGS" \
   ~/utilities-agent-secrets/agent-secrets/install.sh --wire
+CLAUDE_SETTINGS="$SETTINGS" \
+  ~/utilities-friction-receipt/friction-receipt/install.sh --wire
 ```
 
-The two wiring commands are order-independent. Starting from the same settings
-bytes, either order produces equivalent settings: all non-`PreToolUse` values
-and existing entry order are preserved, while the complete `PreToolUse` entry
-collection is the same regardless of which guard was appended first. Both
-orders use the same effective lock and retain one `.bak` containing the
-pre-wiring bytes. The combined installer report has the same facts and exit
-statuses as an order-independent collection; its line order follows the
-invocation order, and only the first changing run reports backup creation. A
-customized same-command entry is likewise reported as `preserved` in either
-order and is never rewritten implicitly.
+The three wiring commands are order-independent. Starting from the same
+settings bytes, every installer order produces equivalent settings: all
+non-hook values, unrelated hook events and entries, and existing entry order
+are preserved, while the complete
+`PreToolUse` and `SessionEnd` entry collections are the same regardless of
+which utility was appended first. All three runs use the same effective lock
+and retain one `.bak` containing the pre-wiring bytes. The combined installer
+report has the same facts and exit statuses as an order-independent
+collection; its line order follows the invocation order, and only the first
+changing run reports backup creation. A customized same-command entry is
+likewise reported as `preserved` in every order and is never rewritten
+implicitly.
 
 Each `--wire` run reads the current JSON and preserves every existing
 top-level setting, `hooks` event, and unrelated hook entry. It identifies its
@@ -89,17 +101,17 @@ its entry. Each utility README lists its exact known-legacy inventory; no other
 same-command shape is eligible for in-place refresh. Before the first run that
 changes an existing settings file,
 the installer creates `$SETTINGS.bak` if it does not already exist. That backup
-is the pre-wiring file: the second installer and later `--wire` runs leave it
+is the pre-wiring file: the second and third installers and later `--wire` runs leave it
 untouched. If the
 settings file does not exist yet, the installer creates it without a backup
 because there is no prior file to preserve. Do not rerun a manual `cp` over
 the backup, and do not copy `settings-both.json` over an existing file or
-concatenate the two JSON objects; doing so can discard unrelated settings and
+concatenate the example JSON with an existing object; doing so can discard unrelated settings and
 hooks. If a non-default settings path is used, pass that same path through
 `CLAUDE_SETTINGS` on every run. For a symlinked `CLAUDE_SETTINGS`, the backup
 is beside the resolved target rather than beside the symlink.
 
-For both installers, an absolute `CLAUDE_SETTINGS` value is used as given and
+For all three installers, an absolute `CLAUDE_SETTINGS` value is used as given and
 a relative value is resolved from that run's current working directory. The
 settings parent must already exist; a `--wire` settings step fails without
 creating a missing parent, settings file, lock, or backup. Path symlinks are
@@ -108,7 +120,7 @@ in place while its target is updated; the target directory receives the lock
 and backup. Distinct paths are independent: wiring one utility at A and the
 other at B leaves one partial hook entry in each file and one separate
 pre-wiring backup per existing file, with no cross-file rollback point. Use the
-same effective path on every run when composing both utilities.
+same effective path on every run when composing all three utilities.
 
 The merge is protected by an exclusive advisory lock at
 `$SETTINGS.lock`, which the installers keep so every concurrent `--wire` run
@@ -116,17 +128,18 @@ uses the same lock. The lock covers reading, merging, backup creation, and
 replacement. Each changed file is written to a uniquely named temporary file
 in the settings file's directory, flushed, and atomically renamed into place;
 an interruption before the rename therefore leaves the live file complete.
-The temporary name includes the utility (`.settings.json.agent-secrets.*.tmp`
-or `.settings.json.org-rule-guard.*.tmp`). Each installer removes its own
+The temporary name includes the utility (`.settings.json.agent-secrets.*.tmp`,
+`.settings.json.org-rule-guard.*.tmp`, or
+`.settings.json.friction-receipt.*.tmp`). Each installer removes its own
 leftover temporary files while holding the lock before reading the settings;
 the other utility's temporary files are left for that utility to reap. Normal
 errors and HUP/INT/TERM interruptions remove the installer's current temporary
 file too. A hard kill can still strand a file, but the next run removes it
 before merging.
 When rewriting an existing file, the replacement keeps the live file's
-permission bits, including mode `0600`. If both installers are started at the
-same time, one waits for the other and then rereads its result, so both hook
-entries and unrelated settings are preserved. Manual editors or other writers
+permission bits, including mode `0600`. If all three installers are started at
+the same time, each waits for the others and then rereads the latest result, so
+all three shipped entries and unrelated settings are preserved. Manual editors or other writers
 that do not honor the same advisory lock must not modify the file during a
 wire; their edits are outside this serialization guarantee.
 
@@ -193,7 +206,7 @@ byte-for-byte unchanged. It never appends a hook entry to such a file.
 - `docs/notes/` — features, constraints, design decisions
 - `docs/examples/` — shipped wiring examples, including the combined
   [`settings-both.json`](docs/examples/settings-both.json) configuration for
-  running both PreToolUse guards
+  running both PreToolUse guards and the SessionEnd producer
 - `docs/research/` — external reference material and prior art
 - `docs/plan/plan.md` — complete plan for the repo
 

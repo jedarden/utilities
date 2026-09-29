@@ -21,6 +21,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/friction-receipt.py",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
