@@ -12,6 +12,7 @@ runtime lookup into the repository.
 import itertools
 import json
 import os
+import signal
 import shutil
 import stat
 import subprocess
@@ -1494,6 +1495,95 @@ sys.stdin.read()
             [expected_lock.name],
         )
         self.assertEqual(list(settings_alias.parent.glob("*.lock")), [])
+
+    def test_interrupted_friction_wire_releases_lock_and_reaps_temp_on_recovery(self):
+        """A killed receipt wire leaves recoverable metadata, not a bad merge."""
+        checkout = self.stage_all_installers()
+        home = self.temp_dir("interrupted-friction-wire-home-")
+        runtime = self.temp_dir("interrupted-friction-wire-runtime-")
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        original = (
+            json.dumps(
+                {"model": "opus", "padding": "x" * (32 * 1024 * 1024)},
+                indent=2,
+            ).encode("utf-8")
+            + b"\n"
+        )
+        settings.write_bytes(original)
+
+        environment = self.clean_environment(home)
+        environment["CLAUDE_SETTINGS"] = str(settings)
+        process = subprocess.Popen(
+            ["/bin/sh", str(checkout / "friction-receipt" / "install.sh"), "--wire"],
+            cwd=runtime,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        interrupted = False
+        stdout = stderr = ""
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                temp_files = list(
+                    settings.parent.glob(".settings.json.friction-receipt.*.tmp")
+                )
+                if temp_files:
+                    interrupted = True
+                    os.killpg(process.pid, signal.SIGKILL)
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.001)
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate(timeout=10)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+
+        self.assertTrue(interrupted, stdout + stderr)
+        self.assertEqual(settings.read_bytes(), original)
+        self.assertTrue(
+            list(settings.parent.glob(".settings.json.friction-receipt.*.tmp"))
+        )
+
+        guard_result = self.run_install(
+            checkout, "org-rule-guard", home, runtime,
+            mode="--wire", settings=settings,
+        )
+        self.assertEqual(guard_result.returncode, 0, guard_result.stderr)
+        self.assertTrue(
+            list(settings.parent.glob(".settings.json.friction-receipt.*.tmp"))
+        )
+
+        receipt_result = self.run_install(
+            checkout, "friction-receipt", home, runtime,
+            mode="--wire", settings=settings,
+        )
+        self.assertEqual(receipt_result.returncode, 0, receipt_result.stderr)
+        self.assertEqual(
+            list(settings.parent.glob(".settings.json.friction-receipt.*.tmp")), []
+        )
+        merged = json.loads(settings.read_text(encoding="utf-8"))
+        self.assertEqual(merged["model"], "opus")
+        self.assertEqual(len(merged["padding"]), 32 * 1024 * 1024)
+        self.assertEqual(
+            {
+                entry["hooks"][0]["command"]
+                for entry in merged["hooks"]["PreToolUse"]
+            },
+            {f"python3 {home / '.claude/hooks/org-rule-guard.py'}"},
+        )
+        self.assertEqual(
+            merged["hooks"]["SessionEnd"][0]["hooks"][0]["command"],
+            f"python3 {home / '.claude/hooks/friction-receipt.py'}",
+        )
+        self.assertEqual(Path(str(settings) + ".bak").read_bytes(), original)
 
     def test_declared_bundle_installs_and_runs_without_checkout(self):
         declaration = self.bundle_declaration()

@@ -114,18 +114,25 @@ settings remain intact. If the command is absent, the entry is appended. A
 single settings file may contain unrelated SessionEnd handlers; they are
 always preserved.
 
-The settings merge uses the same exclusive advisory lock as the other utility
-installers: the effective `CLAUDE_SETTINGS` path is realpath-resolved before
-locking, so a symlinked settings file gets its lock beside its target. The
-lock is created lazily at `$CLAUDE_SETTINGS.lock` with mode `0600`, corrected
-to that mode when reused, and held across stale-temp cleanup, reading,
-merging, backup creation, and atomic replacement. A wire waits at most 30
-seconds; set `CLAUDE_SETTINGS_LOCK_TIMEOUT` to another positive finite number
-to change that deadline. A lock refusal is nonzero and does not modify the
-settings file. Each changed file is written to a friction-receipt-specific
-temporary file in the settings directory, flushed, fsynced, and atomically
-renamed; interruptions clean the active temporary file. A hard kill may leave
-a temporary file for the next friction-receipt wire to reap.
+### Shared settings-lock conformance
+
+friction-receipt is the third participant in the settings-lock protocol shared
+with `agent-secrets` and `org-rule-guard`. The effective `CLAUDE_SETTINGS` path
+is realpath-resolved before locking, so a symlinked settings file gets its lock
+beside its target. The lock is created lazily at `$CLAUDE_SETTINGS.lock` with
+mode `0600`, corrected to that mode when reused, and held across stale-temp
+cleanup, reading, merging, backup creation, and atomic replacement. A wire
+waits at most 30 seconds; set `CLAUDE_SETTINGS_LOCK_TIMEOUT` to another
+positive finite number to change that deadline. A lock refusal is nonzero and
+does not modify the settings file.
+
+Each changed file is written to a friction-receipt-specific temporary file in
+the settings directory, flushed, fsynced, and atomically renamed. Normal
+interruptions clean the active temporary file. A hard kill releases the kernel
+lock and may leave the empty `.lock` metadata and a temporary file; a later
+wire acquires that stale lock normally, and the next friction-receipt wire
+reaps its own temporary file before merging. Other installers leave that
+utility-specific temporary file for friction-receipt to reap.
 
 When an existing settings file changes, the installer creates one
 `<resolved-settings>.bak` snapshot if it does not already exist and preserves
@@ -147,6 +154,12 @@ Uninstall does not rotate, expire, or delete receipts; remove that directory
 separately if its retained history is no longer wanted. Removing the hook
 manually without unwiring leaves Claude invoking a missing command, so use the
 installer lifecycle.
+
+The repository's install-bundle conformance suite exercises all three
+installers against this protocol: lock mode and contention, simultaneous wires
+across different utilities, and recovery after an interrupted friction-receipt
+wire. It verifies that unrelated settings and all three hook entries survive
+the recovery sequence.
 
 The receipt hook reads the org-rule-guard denial log if that guard is installed,
 but does not require it. The two hooks may be installed independently.
