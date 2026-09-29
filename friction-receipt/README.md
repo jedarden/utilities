@@ -22,10 +22,23 @@ with mode `0600` in a mode `0700` directory. `TWILL_RECEIPTS_DIR` overrides the
 directory for tests and explicitly managed installations. Each receipt is
 limited to `64 KiB` on disk; if an unexpectedly large record would exceed the
 limit, optional collections are shortened and the result remains valid JSON.
-A receipt is replaced atomically, so a killed hook leaves the previous complete
-record intact. There is one file per session and no automatic rotation or
-age-based deletion: records remain until an operator removes them. This bounds
-each receipt, not the total number of retained session files.
+The store has a mode `0600` `.receipts.lock` advisory lock. A writer holds the
+exclusive lock while it serializes one complete record to a unique mode `0600`
+temporary file, flushes and fsyncs it, and atomically replaces that session's
+JSON file. Writers never append pieces of JSON to a shared stream. A lock
+timeout or any partial-write, fsync, or replacement failure is swallowed by the
+fail-open hook; the temporary file is removed when possible and every earlier
+complete receipt remains untouched. A killed hook therefore leaves the prior
+complete record intact. The lock wait is finite (`5` seconds by default), so a
+contended store cannot hold SessionEnd indefinitely.
+
+There is one file per session and no automatic rotation or age-based deletion:
+records remain until an operator removes them. If two successful writes use the
+same session id, the last successful atomic replacement wins. Successful
+writes for different sessions are serialized while they hold the lock, but
+there is no cross-session ordering guarantee; consumers must not infer order
+from directory enumeration or file metadata. This bounds each receipt, not the
+total number of retained session files.
 
 The top-level shape is versioned as `twill-friction-receipt/v1`:
 

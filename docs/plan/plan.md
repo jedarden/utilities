@@ -172,6 +172,12 @@ plan.
 - `hooks/friction-receipt.py` — a fail-open Claude Code `SessionEnd` hook. It
   writes one atomically replaced `twill-friction-receipt/v1` JSON object per
   session to `${XDG_STATE_HOME:-~/.local/state}/twill/friction-receipts/`.
+  Writers take the store's mode-0600 `.receipts.lock` across one complete
+  temp-file write, fsync, and replacement, with a finite 5-second wait; lock,
+  write, or replacement failures remain fail-open and leave earlier complete
+  receipts intact. Different-session writes are serialized but have no
+  ordering guarantee in directory enumeration; a same-session rewrite is
+  last-successful-writer-wins.
   The record contains the canonical rule files and skills read from the
   transcript, matching org-rule-guard denials, bounded unresolved error
   signatures, and an `ended_mid_task` flag. Credential-shaped values are

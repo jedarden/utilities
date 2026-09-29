@@ -10,12 +10,15 @@ Receipts use ``twill-friction-receipt/v1`` and live under
 transcript records are never copied into a receipt.
 """
 
+import errno
+import fcntl
 import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 
 
@@ -33,6 +36,8 @@ MAX_DENIAL_FIELD = 128
 MAX_ERROR_SIGNATURE = 240
 MAX_ITEMS = 64
 MAX_DENIALS = 128
+RECEIPT_LOCK_TIMEOUT = 5.0
+RECEIPT_LOCK_POLL = 0.01
 RECEIPT_FIELD_CONTRACT = (
     ("schema", "string", "SCHEMA"),
     ("session_id", "string", "MAX_SESSION_ID"),
@@ -302,13 +307,44 @@ def _serialize_receipt(receipt):
     return _dump_receipt(_minimal_receipt(payload))
 
 
+def _acquire_receipt_lock(directory):
+    """Serialize complete receipt replacements within one store.
+
+    The lock is advisory and process-scoped. A finite wait keeps a contended
+    SessionEnd hook fail-open rather than allowing a store problem to hold up
+    session exit indefinitely.
+    """
+    path = os.path.join(directory, ".receipts.lock")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        deadline = time.monotonic() + RECEIPT_LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("receipt store lock timeout") from error
+                time.sleep(min(RECEIPT_LOCK_POLL, remaining))
+    except Exception:
+        os.close(fd)
+        raise
+
+
 def write_receipt(receipt, input_data=None):
     directory = receipts_dir()
     os.makedirs(directory, mode=0o700, exist_ok=True)
     os.chmod(directory, 0o700)
-    fd, temporary = tempfile.mkstemp(prefix=".receipt.", suffix=".tmp", dir=directory)
     destination = _receipt_path(directory, receipt.get("session_id"), input_data or receipt)
+    lock_fd = _acquire_receipt_lock(directory)
+    fd = None
+    temporary = None
     try:
+        fd, temporary = tempfile.mkstemp(prefix=".receipt.", suffix=".tmp", dir=directory)
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as handle:
             fd = None
@@ -321,9 +357,14 @@ def write_receipt(receipt, input_data=None):
         if fd is not None:
             os.close(fd)
         try:
-            os.unlink(temporary)
+            if temporary is not None:
+                os.unlink(temporary)
         except FileNotFoundError:
             pass
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(lock_fd)
 
 
 def main():

@@ -167,6 +167,49 @@ class ReceiptTests(unittest.TestCase):
             0o600,
         )
 
+    def test_concurrent_session_end_writes_keep_each_receipt_parseable_and_bounded(self):
+        module = load_hook_module()
+        count = 32
+        processes = []
+        for index in range(count):
+            payload = {
+                "session_id": f"concurrent-{index}",
+                "cwd": "/repo/" + ("c" * 500),
+                "reason": "concurrent-session-end",
+            }
+            processes.append((payload, subprocess.Popen(
+                [sys.executable, str(HOOK)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=self.env,
+            )))
+
+        for payload, process in processes:
+            stdout, stderr = process.communicate(
+                json.dumps(payload),
+                timeout=20,
+            )
+            self.assertEqual(process.returncode, 0, stderr)
+            self.assertEqual(stdout, "")
+            self.assertEqual(stderr, "")
+
+        paths = sorted(self.receipts.glob("*.json"))
+        self.assertEqual(len(paths), count)
+        self.assertEqual(
+            stat.S_IMODE((self.receipts / ".receipts.lock").stat().st_mode),
+            0o600,
+        )
+        session_ids = set()
+        for path in paths:
+            self.assertLessEqual(path.stat().st_size, module.MAX_RECEIPT_BYTES)
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["schema"], module.SCHEMA)
+            self.assertRegex(receipt["session_id"], r"^concurrent-[0-9]+$")
+            session_ids.add(receipt["session_id"])
+        self.assertEqual(session_ids, {f"concurrent-{index}" for index in range(count)})
+
     def test_pending_bash_marks_session_mid_task_and_missing_input_is_fail_open(self):
         self.transcript.write_text(json.dumps({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": "bash", "name": "Bash",
