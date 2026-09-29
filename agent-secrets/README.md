@@ -140,6 +140,16 @@ replacing the hook, wrapper, and provenance record. Reinstall from the
 intended release is the repair path; `--uninstall` removes the provenance
 record with those installed files.
 
+An upgrade is a complete refresh of this utility's managed layout. Run the
+new release with `--wire` (or `--force` when settings should not be changed):
+the hook, `bao-as` wrapper, and provenance record are replaced together, and
+regular files left in the dedicated `agent-secrets/` installed layout that
+are not part of the new release are pruned. The shared `~/.config/bao-as/`
+directory, `instances.conf`, and credential/state files are never pruned.
+`--status` is read-only and reports a partial upgrade or stale managed file as
+drift until the selected release is run successfully; it does not repair the
+layout itself.
+
 ### Installed runtime prerequisite
 
 The installed credential guard is wired as `python3

@@ -94,6 +94,39 @@ check_installed_file() {
   fi
 }
 
+check_unexpected_files() {
+  directory=$1
+  expected=$2
+  for path in "$directory"/.[!.]* "$directory"/*; do
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      continue
+    fi
+    case "$path" in
+      "$expected") ;;
+      *) status_report "stale installed path at $path" ;;
+    esac
+  done
+}
+
+prune_unexpected_files() {
+  directory=$1
+  expected=$2
+  for path in "$directory"/.[!.]* "$directory"/*; do
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      continue
+    fi
+    case "$path" in
+      "$expected") ;;
+      *)
+        if [ -f "$path" ] || [ -L "$path" ]; then
+          rm -f "$path"
+          echo "pruned     $path"
+        fi
+        ;;
+    esac
+  done
+}
+
 check_installed_state() {
   # The status path intentionally uses only shell built-ins plus cat/cmp.  It
   # remains useful on a host where python3 is unavailable, while the install
@@ -134,6 +167,7 @@ check_installed_state() {
   fi
   check_installed_file "credential guard hook" "$HERE/hooks/credential-guard.py" "$HOOK_DST"
   check_installed_file "bao-as wrapper" "$HERE/bin/bao-as" "$BIN_DST"
+  check_unexpected_files "$PROVENANCE_DIR" "$PROVENANCE_DST"
   return "$status_error"
 }
 
@@ -426,6 +460,7 @@ if [ "$blocked" -eq 1 ]; then
   exit 0
 fi
 
+prune_unexpected_files "$PROVENANCE_DIR" "$PROVENANCE_DST"
 report_previous_install
 install -m 755 "$HERE/hooks/credential-guard.py" "$HOOK_DST"
 install -m 755 "$HERE/bin/bao-as" "$BIN_DST"

@@ -264,6 +264,139 @@ class SelectiveInstallTests(unittest.TestCase):
                 self.assertIn("reinstall to repair", status.stderr)
                 self.assertEqual(self.installed_file_snapshot(home), before)
 
+    def test_upgrade_prunes_stale_layout_and_refreshes_agent_provenance(self):
+        old = self.stage_release("agent-secrets")
+        new = self.stage_release("agent-secrets")
+        new_version = "0.2.0"
+        (new / "agent-secrets" / "VERSION").write_text(
+            new_version + "\n", encoding="utf-8"
+        )
+        new_hook = new / "agent-secrets" / "hooks" / "credential-guard.py"
+        new_hook.write_text(
+            new_hook.read_text(encoding="utf-8") + "\n# v0.2.0 fixture\n",
+            encoding="utf-8",
+        )
+        home = self.temp_dir("agent-secrets-upgrade-home-")
+        runtime = self.temp_dir("agent-secrets-upgrade-runtime-")
+
+        initial = self.run_install(old, "agent-secrets", home, runtime)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        stale = home / ".claude" / "hooks" / "agent-secrets" / "old-only.py"
+        stale.write_text("old release output\n", encoding="utf-8")
+
+        before_upgrade_status = self.run_install(
+            old,
+            "agent-secrets",
+            home,
+            runtime,
+            "--status",
+            env_overrides={
+                "PATH": str(self.status_path("agent-secrets-upgrade-status-bin-"))
+            },
+        )
+        self.assertNotEqual(before_upgrade_status.returncode, 0)
+        self.assertIn("stale installed path", before_upgrade_status.stderr)
+
+        upgraded = self.run_install(new, "agent-secrets", home, runtime, "--wire")
+        self.assertEqual(upgraded.returncode, 0, upgraded.stderr)
+        self.assertIn("previously installed agent-secrets v0.1.0", upgraded.stdout)
+        self.assertFalse(stale.exists())
+        _, provenance = self.read_provenance(home, "agent-secrets")
+        self.assertEqual(provenance["version"], new_version)
+        self.assertEqual(
+            (home / ".claude" / "hooks" / "credential-guard.py").read_bytes(),
+            new_hook.read_bytes(),
+        )
+
+        status = self.run_install(
+            new,
+            "agent-secrets",
+            home,
+            runtime,
+            "--status",
+            env_overrides={
+                "PATH": str(self.status_path("agent-secrets-upgrade-status-bin-2-"))
+            },
+        )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(json.loads(status.stdout), provenance)
+
+    def test_upgrade_refreshes_org_provenance_and_bundle_pin_after_partial_upgrade(self):
+        old = self.stage_checkout()
+        new = self.stage_checkout()
+        new_version = "0.2.0"
+        (new / "agent-secrets" / "VERSION").write_text(
+            new_version + "\n", encoding="utf-8"
+        )
+        new_bundle = new / "agent-secrets" / "hooks" / "credential-guard.py"
+        new_bundle.write_text(
+            new_bundle.read_text(encoding="utf-8") + "\n# v0.2.0 bundle fixture\n",
+            encoding="utf-8",
+        )
+        (new / "org-rule-guard" / "VERSION").write_text(
+            new_version + "\n", encoding="utf-8"
+        )
+        manifest_path = new / "org-rule-guard" / "bundled-dependencies.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["bundles"][0]["version"] = new_version
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        home = self.temp_dir("org-rule-guard-upgrade-home-")
+        runtime = self.temp_dir("org-rule-guard-upgrade-runtime-")
+
+        initial = self.run_install(old, "org-rule-guard", home, runtime)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        stale = home / ".claude" / "hooks" / "org-rule-guard" / "old-only.py"
+        stale.write_text("old release output\n", encoding="utf-8")
+
+        # Copying only the new primary hook models an interrupted upgrade.  The
+        # old provenance and bundle must make --status report the layout as
+        # incomplete until the selected release is installed fully.
+        hook_dst = home / ".claude" / "hooks" / "org-rule-guard.py"
+        shutil.copy2(new / "org-rule-guard" / "hooks" / "org-rule-guard.py", hook_dst)
+        partial = self.run_install(
+            new,
+            "org-rule-guard",
+            home,
+            runtime,
+            "--status",
+            env_overrides={
+                "PATH": str(self.status_path("org-rule-guard-upgrade-status-bin-"))
+            },
+        )
+        self.assertNotEqual(partial.returncode, 0)
+        self.assertIn("installed utility v0.1.0 does not match", partial.stderr)
+        self.assertIn("stale bundle pin", partial.stderr)
+        self.assertIn("modified or stale bundled", partial.stderr)
+        self.assertIn("stale installed path", partial.stderr)
+
+        upgraded = self.run_install(new, "org-rule-guard", home, runtime, "--wire")
+        self.assertEqual(upgraded.returncode, 0, upgraded.stderr)
+        self.assertIn("previously installed org-rule-guard v0.1.0", upgraded.stdout)
+        self.assertIn("previously bundled agent-secrets v0.1.0", upgraded.stdout)
+        self.assertFalse(stale.exists())
+        _, provenance = self.read_provenance(home, "org-rule-guard")
+        self.assertEqual(provenance["version"], new_version)
+        self.assertEqual(provenance["bundles"][0]["version"], new_version)
+        bundle_dst = (
+            home / ".claude" / "hooks" / "org-rule-guard" / "credential-guard.py"
+        )
+        self.assertEqual(bundle_dst.read_bytes(), new_bundle.read_bytes())
+
+        status = self.run_install(
+            new,
+            "org-rule-guard",
+            home,
+            runtime,
+            "--status",
+            env_overrides={
+                "PATH": str(self.status_path("org-rule-guard-upgrade-status-bin-2-"))
+            },
+        )
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(json.loads(status.stdout), provenance)
+
     def test_provenance_survives_unrelated_settings_wire(self):
         cases = (
             ("agent-secrets", self.stage_release("agent-secrets")),

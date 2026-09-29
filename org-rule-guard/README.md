@@ -209,6 +209,17 @@ version and bundle pins before replacing the hook, bundle, and provenance
 record. `--uninstall` removes the provenance record with those installed
 files.
 
+An upgrade is a complete refresh of this utility's managed layout. Run the
+new release with `--wire` (or `--force` when settings should not be changed):
+the org hook, copied credential bundle, provenance record, and recorded bundle
+pin are refreshed from that release. Regular files left in the dedicated
+`org-rule-guard/` installed layout that are not the current bundle or
+provenance record are pruned; denial logs and other state directories are
+never pruned. The bundle pin moves only when the selected release's manifest
+and the staged `agent-secrets/VERSION` agree. `--status` is read-only and
+classifies a partial upgrade, stale bundle pin, or stale managed file as drift
+until the selected release is run successfully.
+
 ### Installed runtime prerequisite
 
 The installed org guard is wired as `python3

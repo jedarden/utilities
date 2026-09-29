@@ -70,6 +70,41 @@ check_installed_file() {
   fi
 }
 
+check_unexpected_files() {
+  directory=$1
+  expected_one=$2
+  expected_two=$3
+  for path in "$directory"/.[!.]* "$directory"/*; do
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      continue
+    fi
+    case "$path" in
+      "$expected_one"|"$expected_two") ;;
+      *) status_report "stale installed path at $path" ;;
+    esac
+  done
+}
+
+prune_unexpected_files() {
+  directory=$1
+  expected_one=$2
+  expected_two=$3
+  for path in "$directory"/.[!.]* "$directory"/*; do
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      continue
+    fi
+    case "$path" in
+      "$expected_one"|"$expected_two") ;;
+      *)
+        if [ -f "$path" ] || [ -L "$path" ]; then
+          rm -f "$path"
+          echo "pruned     $path"
+        fi
+        ;;
+    esac
+  done
+}
+
 check_installed_state() {
   recorded_utility=
   recorded_version=
@@ -142,6 +177,7 @@ check_installed_state() {
   fi
   check_installed_file "org guard hook" "$HERE/hooks/org-rule-guard.py" "$HOOK_DST"
   check_installed_file "bundled $recorded_bundle_utility credential guard" "$bundle_source" "$bundle_destination"
+  check_unexpected_files "${HOOK_DST%.py}" "${HOOK_DST%.py}/$recorded_bundle_destination" "$PROVENANCE_DST"
   return "$status_error"
 }
 
@@ -424,6 +460,7 @@ if [ "$blocked" -eq 1 ]; then
   exit 0
 fi
 
+prune_unexpected_files "${HOOK_DST%.py}" "$BUNDLE_DST" "$PROVENANCE_DST"
 if [ -f "$PROVENANCE_DST" ]; then
   python3 - "$PROVENANCE_DST" <<'PY'
 import json
