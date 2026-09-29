@@ -14,8 +14,13 @@ root `LICENSE` text when redistributing an installed copy.
 Receipts are written to
 `${XDG_STATE_HOME:-$HOME/.local/state}/twill/friction-receipts/<session_id>.json`
 with mode `0600` in a mode `0700` directory. `TWILL_RECEIPTS_DIR` overrides the
-directory for tests and explicitly managed installations. A receipt is replaced
-atomically, so a killed hook leaves the previous complete record intact.
+directory for tests and explicitly managed installations. Each receipt is
+limited to `64 KiB` on disk; if an unexpectedly large record would exceed the
+limit, optional collections are shortened and the result remains valid JSON.
+A receipt is replaced atomically, so a killed hook leaves the previous complete
+record intact. There is one file per session and no automatic rotation or
+age-based deletion: records remain until an operator removes them. This bounds
+each receipt, not the total number of retained session files.
 
 The top-level shape is versioned as `twill-friction-receipt/v1`:
 
@@ -118,9 +123,12 @@ known-legacy exact-command SessionEnd handlers. A customized handler is
 preserved and exits `2` unless `--uninstall --force` is supplied. Invalid
 settings, a lock failure, or any unwiring failure leaves the installed hook in
 place. On success the settings entry is removed before the hook file, the lock
-file is removed, the backup is left untouched, and all receipt state is left
-in place. Removing the hook manually without unwiring leaves Claude invoking
-a missing command, so use the installer lifecycle.
+file is removed, the backup is left untouched, and all receipt state—the
+`twill/friction-receipts` directory and its existing records—is left in place.
+Uninstall does not rotate, expire, or delete receipts; remove that directory
+separately if its retained history is no longer wanted. Removing the hook
+manually without unwiring leaves Claude invoking a missing command, so use the
+installer lifecycle.
 
 The receipt hook reads the org-rule-guard denial log if that guard is installed,
 but does not require it. The two hooks may be installed independently.

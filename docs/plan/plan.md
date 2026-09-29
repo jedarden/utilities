@@ -176,12 +176,15 @@ plan.
   transcript, matching org-rule-guard denials, bounded unresolved error
   signatures, and an `ended_mid_task` flag. Credential-shaped values are
   redacted before all fields are bounded; raw transcript records are never
-  copied. The directory is mode 0700 and records are mode 0600.
+  copied. The directory is mode 0700 and records are mode 0600. Each record is
+  hard-limited to 64 KiB; there is no rotation or age-based expiry, so one
+  record per session remains until an operator removes it. Uninstall leaves
+  the receipt directory and its records in place.
 - `hooks/test_friction_receipt.py` — fixture-driven round-trip and installer
   contract coverage for rule reads, denials, unresolved errors, mid-task
-  sessions, malformed input, permissions, redaction, idempotent wiring,
-  legacy refresh, customization preservation, ownership refusal, and
-  uninstall unwiring.
+  sessions, malformed input, permissions, redaction, hard size bounding,
+  idempotent wiring, legacy refresh, customization preservation, ownership
+  refusal, uninstall unwiring, and receipt retention.
 - `install.sh` — idempotent copy to `~/.claude/hooks/friction-receipt.py`;
   `--wire` merges one exact-command `SessionEnd` entry under the shared
   lock/backup/atomic-write protocol, refreshes only the documented no-timeout

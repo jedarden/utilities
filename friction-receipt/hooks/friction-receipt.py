@@ -21,9 +21,21 @@ from datetime import datetime, timezone
 
 SCHEMA = "twill-friction-receipt/v1"
 RECEIPTS_DIR_ENV = "TWILL_RECEIPTS_DIR"
+MAX_RECEIPT_BYTES = 64 * 1024
 MAX_TEXT = 240
 MAX_ITEMS = 64
 MAX_DENIALS = 128
+_RECEIPT_KEYS = (
+    "schema",
+    "session_id",
+    "ended_at",
+    "reason",
+    "cwd",
+    "rules_consulted",
+    "denials",
+    "unresolved_errors",
+    "ended_mid_task",
+)
 
 _SECRET_PATTERNS = (
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
@@ -209,6 +221,57 @@ def build_receipt(input_data):
     }
 
 
+def _dump_receipt(receipt):
+    return (
+        json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+
+
+def _minimal_receipt(receipt):
+    """Return a valid, small receipt if an otherwise valid record is oversized."""
+    return {
+        "schema": SCHEMA,
+        "session_id": _safe(receipt.get("session_id"), 128) or "unknown",
+        "ended_at": _redact(receipt.get("ended_at"), 32),
+        "reason": _safe(receipt.get("reason"), 128) or "other",
+        "cwd": _redact(receipt.get("cwd"), 160),
+        "rules_consulted": [],
+        "denials": [],
+        "unresolved_errors": [],
+        "ended_mid_task": bool(receipt.get("ended_mid_task")),
+    }
+
+
+def _serialize_receipt(receipt):
+    """Serialize a receipt without ever emitting more than the byte limit."""
+    payload = {key: receipt.get(key) for key in _RECEIPT_KEYS}
+    for key in ("rules_consulted", "denials", "unresolved_errors"):
+        if not isinstance(payload[key], list):
+            payload[key] = []
+    encoded = _dump_receipt(payload)
+    if len(encoded) <= MAX_RECEIPT_BYTES:
+        return encoded
+
+    # Keep a complete prefix of each collection while it fits. The
+    # normal build_receipt bounds fit comfortably, but this also protects the
+    # storage boundary if this function is called with an oversized record.
+    while len(encoded) > MAX_RECEIPT_BYTES:
+        collections = [
+            key for key in ("unresolved_errors", "denials", "rules_consulted")
+            if payload[key]
+        ]
+        if not collections:
+            break
+        largest = max(collections, key=lambda key: len(payload[key]))
+        payload[largest].pop()
+        encoded = _dump_receipt(payload)
+
+    if len(encoded) <= MAX_RECEIPT_BYTES:
+        return encoded
+    return _dump_receipt(_minimal_receipt(payload))
+
+
 def write_receipt(receipt, input_data=None):
     directory = receipts_dir()
     os.makedirs(directory, mode=0o700, exist_ok=True)
@@ -217,10 +280,9 @@ def write_receipt(receipt, input_data=None):
     destination = _receipt_path(directory, receipt.get("session_id"), input_data or receipt)
     try:
         os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "wb") as handle:
             fd = None
-            json.dump(receipt, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            handle.write("\n")
+            handle.write(_serialize_receipt(receipt))
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, destination)

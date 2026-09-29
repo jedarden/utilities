@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import importlib.util
 import json
 import os
 import stat
@@ -11,6 +12,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "friction-receipt.py"
+
+
+def load_hook_module():
+    spec = importlib.util.spec_from_file_location("friction_receipt", HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class ReceiptTests(unittest.TestCase):
@@ -70,6 +78,19 @@ class ReceiptTests(unittest.TestCase):
         self.assertFalse(receipt["ended_mid_task"])
         self.assertEqual(stat.S_IMODE(self.receipts.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE((self.receipts / "sess-1.json").stat().st_mode), 0o600)
+
+    def test_receipt_store_and_files_are_private_with_permissive_umask(self):
+        old_umask = os.umask(0)
+        try:
+            result = self.run_hook({"session_id": "private-receipt"})
+        finally:
+            os.umask(old_umask)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(self.receipts.stat().st_mode), 0o700)
+        self.assertEqual(
+            stat.S_IMODE((self.receipts / "private-receipt.json").stat().st_mode),
+            0o600,
+        )
 
     def test_pending_bash_marks_session_mid_task_and_missing_input_is_fail_open(self):
         self.transcript.write_text(json.dumps({"type": "assistant", "message": {"content": [
@@ -164,6 +185,35 @@ class ReceiptTests(unittest.TestCase):
             self.assertEqual(len(denial["tool"]), 128)
         for error in receipt["unresolved_errors"]:
             self.assertEqual(len(error["signature"]), 240)
+
+    def test_oversized_receipt_is_valid_json_under_the_hard_byte_bound(self):
+        module = load_hook_module()
+        module.MAX_RECEIPT_BYTES = 1024
+        previous = os.environ.get(module.RECEIPTS_DIR_ENV)
+        os.environ[module.RECEIPTS_DIR_ENV] = str(self.receipts)
+        try:
+            module.write_receipt({
+                "schema": module.SCHEMA,
+                "session_id": "oversized",
+                "ended_at": "2026-09-28T20:00:00Z",
+                "reason": "other",
+                "cwd": "/repo",
+                "rules_consulted": [],
+                "denials": [],
+                "unresolved_errors": [
+                    {"kind": "tool_error", "signature": "x" * 100_000}
+                    for _ in range(10)
+                ],
+                "ended_mid_task": False,
+            }, {"session_id": "oversized"})
+        finally:
+            if previous is None:
+                os.environ.pop(module.RECEIPTS_DIR_ENV, None)
+            else:
+                os.environ[module.RECEIPTS_DIR_ENV] = previous
+        path = self.receipts / "oversized.json"
+        self.assertLessEqual(path.stat().st_size, module.MAX_RECEIPT_BYTES)
+        self.assertEqual(json.loads(path.read_text())['schema'], module.SCHEMA)
 
     def test_receipt_redacts_credential_like_content(self):
         credential_values = [
@@ -405,6 +455,21 @@ class ReceiptTests(unittest.TestCase):
         merged = json.loads(settings.read_text())
         self.assertEqual(merged["hooks"].get("SessionEnd"), [unrelated])
         self.assertFalse(Path(str(settings) + ".lock").exists())
+
+    def test_uninstall_leaves_receipt_state_in_place(self):
+        settings = self.root / "settings.json"
+        self.receipts.mkdir()
+        receipt = self.receipts / "already-written.json"
+        receipt.write_text('{"schema":"twill-friction-receipt/v1"}\n')
+        before = receipt.read_bytes()
+        first = self.run_installer(settings, "--wire")
+        self.assertEqual(first.returncode, 0, first.stderr)
+
+        result = self.run_installer(settings, "--uninstall")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.receipts.is_dir())
+        self.assertEqual(receipt.read_bytes(), before)
 
     def test_uninstall_preserves_customized_entry_until_force(self):
         settings = self.root / "settings.json"
