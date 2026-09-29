@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -186,12 +187,15 @@ class ReceiptTests(unittest.TestCase):
                 env=self.env,
             )))
 
-        for payload, process in processes:
-            stdout, stderr = process.communicate(
-                json.dumps(payload),
-                timeout=20,
-            )
-            self.assertEqual(process.returncode, 0, stderr)
+        def finish(process_and_payload):
+            payload, process = process_and_payload
+            stdout, stderr = process.communicate(json.dumps(payload), timeout=20)
+            return process.returncode, stdout, stderr
+
+        with ThreadPoolExecutor(max_workers=count) as executor:
+            results = list(executor.map(finish, processes))
+        for returncode, stdout, stderr in results:
+            self.assertEqual(returncode, 0, stderr)
             self.assertEqual(stdout, "")
             self.assertEqual(stderr, "")
 
